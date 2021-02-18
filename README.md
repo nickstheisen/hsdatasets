@@ -15,6 +15,8 @@ After loading the data the image is zero-padded and NxN patches are sampled at e
 If necessary the dimensionality can be reduced to M dimensions using PCA. The user can define M and 
 N during class instantiation.
 
+**Warning: If N>1 pixels in multiple data patches overlap which may lead to data leakage when not taken care of.**
+
 ### Currently Supported Data Sets
 
 Data Set|Spatial Resolution [px]|Spectral Resolution [bands] | Classes |Sensor
