@@ -83,13 +83,13 @@ DATASETS_CONFIG = {
 }
 
 class HyperspectralDataset(Dataset):
-    def __init__(self, scene, root_dir,
-                 window_size,
-                 apply_pca,
-                 pca_dim,
-                 rm_zero_labels,
-                 transform):
-        self.root_dir = Path(root_dir)
+    def __init__(self, scene, root_dir='~/data',
+                 window_size=1,
+                 apply_pca=False,
+                 pca_dim=75,
+                 rm_zero_labels=True,
+                 transform=None):
+        self.root_dir = Path(root_dir).expanduser()
         self.transform = transform
         self.window_size = window_size
 
@@ -202,99 +202,29 @@ class HyperspectralDataset(Dataset):
         return self.pca
 
 class PaviaU(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('PU', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='PU', *args, **kwargs)
 
 class PaviaC(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('PC', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='PC', *args, **kwargs)
 
 class SalinasScene(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('Salinas', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='Salinas', *args, **kwargs)
 
 class SalinasA(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('SalinasA', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='SalinasA', *args, **kwargs)
 
 class IndianPines(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('IP', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='IP', *args, **kwargs)
 
 class KennedySpaceCenter(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('KSC', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='KSC', *args, **kwargs)
 
 class Botswana(HyperspectralDataset):
-    def __init__(self, root_dir='~/data',
-            window_size=1,
-            apply_pca=False,
-            pca_dim=75,
-            rm_zero_labels=True,
-            transform=None):
-        super().__init__('Botswana', root_dir,
-                window_size,
-                apply_pca,
-                pca_dim,
-                rm_zero_labels,
-                transform)
+    def __init__(self, *args, **kwargs):
+        super().__init__(scene='Botswana', *args, **kwargs)
