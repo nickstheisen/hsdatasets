@@ -88,21 +88,42 @@ class HyperspectralDataset(Dataset):
                  apply_pca=False,
                  pca_dim=75,
                  rm_zero_labels=True,
+                 padding_mode='constant',
+                 padding_values=0,
+                 secure_sampling=True,
                  transform=None):
+        # dataset config
         self.root_dir = Path(root_dir).expanduser()
-        self.transform = transform
-        self.window_size = window_size
+        self.scene=scene
 
-        data, labels = self._load_data(scene)
+        # data processing config
+        self.transform = transform
+        self.apply_pca = apply_pca
+        self.pca_dim = pca_dim
+
+        # sampling config
+        self.window_size = window_size
+        self.rm_zero_labels = rm_zero_labels
+        self.padding_mode=padding_mode
+        self.padding_values=padding_values
+        self.secure_sampling = secure_sampling
+
+        # prepare data
+        data, labels = self._load_data()
 
         if apply_pca:
-            data, self.pca = self._apply_pca(data, pca_dim)
+            data = self._apply_pca(data)
 
-        self.data_patches, self.patch_labels = self._sample_patches(
-                data, labels,
-                self.window_size,
-                rm_zero_labels)
-
+        if self.secure_sampling:
+            self.data_patches, self.patch_labels = self._secure_sample_patches(
+                    data, labels)
+        else :
+            self.data_patches, self.patch_labels = self._sample_patches(
+                    data, labels,
+                    self.window_size,
+                    rm_zero_labels,
+                    self.padding_mode,
+                    self.padding_values)
 
     def __len__(self):
         return self.data_patches.shape[0]
@@ -122,68 +143,63 @@ class HyperspectralDataset(Dataset):
 
         return sample
 
-    def _load_data(self, scene):
+    def _load_data(self):
         self.root_dir.mkdir(parents=True, exist_ok=True)
-        filepath_data = self.root_dir.joinpath(DATASETS_CONFIG[scene]['img']['name'])
-        filepath_labels = self.root_dir.joinpath(DATASETS_CONFIG[scene]['gt']['name'])
+        filepath_data = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['img']['name'])
+        filepath_labels = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['gt']['name'])
 
         if not filepath_data.is_file():
             with TqdmUpTo(unit='B', unit_scale=True, miniters=1,
                     desc="Downloading {}".format(filepath_data)) as t:
-                url = DATASETS_CONFIG[scene]['img']['url']
+                url = DATASETS_CONFIG[self.scene]['img']['url']
                 urlretrieve(url, filename=filepath_data, reporthook=t.update_to)
 
         if not filepath_labels.is_file():
             with TqdmUpTo(unit='B', unit_scale=True, miniters=1,
                     desc="Downloading {}".format(filepath_data)) as t:
-                url = DATASETS_CONFIG[scene]['gt']['url']
+                url = DATASETS_CONFIG[self.scene]['gt']['url']
                 urlretrieve(url, filename=filepath_labels, reporthook=t.update_to)
 
-        if scene == 'IP':
+        # dataset specific addressing
+        if self.scene == 'IP':
             data = loadmat(filepath_data)['indian_pines_corrected']
             labels = loadmat(filepath_labels)['indian_pines_gt']
-        elif scene == 'Salinas':
+        elif self.scene == 'Salinas':
             data = loadmat(filepath_data)['salinas_corrected']
             labels = loadmat(filepath_labels)['salinas_gt']
-        elif scene == 'SalinasA':
+        elif self.scene == 'SalinasA':
             data = loadmat(filepath_data)['salinasA_corrected']
             labels = loadmat(filepath_labels)['salinasA_gt']
-        elif scene == 'PU':
+        elif self.scene == 'PU':
             data = loadmat(filepath_data)['paviaU']
             labels = loadmat(filepath_labels)['paviaU_gt']
-        elif scene == 'PC':
+        elif self.scene == 'PC':
             data = loadmat(filepath_data)['pavia']
             labels = loadmat(filepath_labels)['pavia_gt']
-        elif scene == 'KSC':
+        elif self.scene == 'KSC':
             data = loadmat(filepath_data)['KSC']
             labels = loadmat(filepath_labels)['KSC_gt']
-        elif scene == 'Botswana':
+        elif self.scene == 'Botswana':
             data = loadmat(filepath_data)['Botswana']
             labels = loadmat(filepath_labels)['Botswana_gt']
         return data, labels
 
-    def _apply_pca(self, data, pca_dim):
+    def _apply_pca(self, data):
         X = np.reshape(data, (-1, data.shape[2]))
-        pca = PCA(n_components=pca_dim, whiten=True)
-        X = pca.fit_transform(X)
-        X = np.reshape(X, (data.shape[0], data.shape[1], pca_dim))
-        return X, pca
-
-    def _pad_with_zeros(self, data, margin=2):
-        X = np.zeros((data.shape[0] + 2 * margin,
-                      data.shape[1] + 2 * margin,
-                      data.shape[2]))
-        x_offset = margin
-        y_offset = margin
-        X[x_offset:data.shape[0] + x_offset,
-          y_offset:data.shape[1] + y_offset, :] = data
+        self.pca = PCA(n_components=self.pca_dim, whiten=True)
+        X = self.pca.fit_transform(X)
+        X = np.reshape(X, (data.shape[0], data.shape[1], self.pca_dim))
         return X
 
-    def _sample_patches(self, data, labels, window_size, rm_zero_labels):
-        margin = int((window_size - 1) / 2)
-        X = self._pad_with_zeros(data, margin=margin)
+    def _sample_patches(self, data, labels):
+
+        # pad along spatial axes
+        margin = int((self.window_size - 1) / 2)
+        X = np.pad(data, ((margin, margin), (margin, margin), (0,0)), 
+                mode=self.padding_mode, constant_values=self.padding_values) 
         # split patches
-        data_patches = np.zeros((data.shape[0] * data.shape[1], window_size, window_size, data.shape[2]))
+        data_patches = np.zeros((data.shape[0] * data.shape[1], self.window_size, self.window_size, 
+            data.shape[2]))
         patch_labels = np.zeros((data.shape[0] * data.shape[1]))
         patch_idx = 0
         for r in range(margin, X.shape[0] - margin):
@@ -192,11 +208,15 @@ class HyperspectralDataset(Dataset):
                 data_patches[patch_idx, :, :, :] = patch
                 patch_labels[patch_idx] = labels[r-margin, c-margin]
                 patch_idx += 1
-        if rm_zero_labels:
+        if self.rm_zero_labels:
             data_patches = data_patches[patch_labels>0,:,:,:]
             patch_labels = patch_labels[patch_labels>0]
             patch_labels -= 1
         return data_patches, patch_labels
+
+    def _secure_sample_patches(self, data, labels):
+        print('Secure sampling is not implemented yet! Falling back to normal sampling.')
+        return _sample_patches(data, labels)
 
     def pca(self):
         return self.pca
