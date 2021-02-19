@@ -3,11 +3,12 @@
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
-from scipy.io import loadmat
+from scipy.io import loadmat, savemat
 from urllib.request import urlretrieve
 import numpy as np
 from sklearn.decomposition import PCA
 from hsdatasets.utils import TqdmUpTo
+from shutil import rmtree
 
 DATASETS_CONFIG = {
         'IP' : {
@@ -92,8 +93,9 @@ class HyperspectralDataset(Dataset):
                  padding_values=0,
                  secure_sampling=True,
                  transform=None):
+
         # dataset config
-        self.root_dir = Path(root_dir).expanduser()
+        self.root_dir = Path(root_dir).expanduser().joinpath(scene)
         self.scene=scene
 
         # data processing config
@@ -110,15 +112,16 @@ class HyperspectralDataset(Dataset):
 
         # prepare data
         data, labels = self._load_data()
+        self.samples = np.array([])
 
         if apply_pca:
             data = self._apply_pca(data)
 
         if self.secure_sampling:
-            self.data_patches, self.patch_labels = self._secure_sample_patches(
+            self._secure_sample_patches(
                     data, labels)
         else :
-            self.data_patches, self.patch_labels = self._sample_patches(
+            self._sample_patches(
                     data, labels,
                     self.window_size,
                     rm_zero_labels,
@@ -126,17 +129,18 @@ class HyperspectralDataset(Dataset):
                     self.padding_values)
 
     def __len__(self):
-        return self.data_patches.shape[0]
+        return self.samples.shape[0]
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
+        
+        sample = loadmat(self.samples[idx])
+        patch = np.array([sample['data']])
+        label = sample['label'].squeeze()
+        patch = patch.astype('float').transpose(0,3,2,1) # convert to NCHW-order
 
-        patch = self.data_patches[idx]
-        patch = np.array([patch])
-        patch = patch.astype('float').transpose(0,3,2,1)
-
-        sample = (patch, np.array(self.patch_labels[idx]))
+        sample = (patch, label)
 
         if self.transform:
             sample = self.transform(sample)
@@ -192,31 +196,46 @@ class HyperspectralDataset(Dataset):
         return X
 
     def _sample_patches(self, data, labels):
+        patchdir = self.root_dir.joinpath('patches')
+        if patchdir.is_dir():
+            # TODO: use warnings module
+            print(f'Sampled data already exists remove directory'
+                    '"{patchdir}" to resample data!')
+            # TODO: load sampling data and return
+
+        patchdir.mkdir(parents=True, exist_ok=True)
 
         # pad along spatial axes
         margin = int((self.window_size - 1) / 2)
         X = np.pad(data, ((margin, margin), (margin, margin), (0,0)), 
                 mode=self.padding_mode, constant_values=self.padding_values) 
+
         # split patches
-        data_patches = np.zeros((data.shape[0] * data.shape[1], self.window_size, self.window_size, 
-            data.shape[2]))
-        patch_labels = np.zeros((data.shape[0] * data.shape[1]))
-        patch_idx = 0
+        samples = []
         for r in range(margin, X.shape[0] - margin):
             for c in range(margin, X.shape[1] - margin):
+                patchlabel = labels[r-margin, c-margin]
+
+                # if '0' label is removed '1' is new '0'
+                if self.rm_zero_labels:
+                    if patchlabel == 0:
+                        continue
+                    else :
+                        patchlabel -= 1
+
                 patch = X[r - margin:r + margin + 1, c - margin:c + margin + 1]
-                data_patches[patch_idx, :, :, :] = patch
-                patch_labels[patch_idx] = labels[r-margin, c-margin]
-                patch_idx += 1
-        if self.rm_zero_labels:
-            data_patches = data_patches[patch_labels>0,:,:,:]
-            patch_labels = patch_labels[patch_labels>0]
-            patch_labels -= 1
-        return data_patches, patch_labels
+                
+                # store sample in permanent memory
+                samplepath = patchdir.joinpath(f'x{r}_y{c}.mat')
+                samples.append(samplepath)
+                sample = {'data': patch, 'label': patchlabel}
+                savemat(samplepath, sample)
+
+        self.samples = np.array(samples)
 
     def _secure_sample_patches(self, data, labels):
         print('Secure sampling is not implemented yet! Falling back to normal sampling.')
-        return _sample_patches(data, labels)
+        return self._sample_patches(data, labels)
 
     def pca(self):
         return self.pca
