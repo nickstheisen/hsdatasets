@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 from hsdatasets.utils import TqdmUpTo
 from shutil import rmtree
+import warnings
 
 DATASETS_CONFIG = {
         'IP' : {
@@ -198,10 +199,13 @@ class HyperspectralDataset(Dataset):
     def _sample_patches(self, data, labels):
         patchdir = self.root_dir.joinpath('patches')
         if patchdir.is_dir():
-            # TODO: use warnings module
-            print(f'Sampled data already exists remove directory'
-                    '"{patchdir}" to resample data!')
-            # TODO: load sampling data and return
+            warnings.warn('Sampled data already exists remove directory'
+                    ' "{}" to resample data!'.format(patchdir))
+            
+            self.samples = np.array([
+                    Path(p) for p in np.loadtxt(patchdir.joinpath('sample_list.txt'), dtype=str)
+                ])
+            return
 
         patchdir.mkdir(parents=True, exist_ok=True)
 
@@ -230,11 +234,13 @@ class HyperspectralDataset(Dataset):
                 samples.append(samplepath)
                 sample = {'data': patch, 'label': patchlabel}
                 savemat(samplepath, sample)
-
+        
         self.samples = np.array(samples)
 
+        np.savetxt(patchdir.joinpath('sample_list.txt'), self.samples, fmt="%s")
+
     def _secure_sample_patches(self, data, labels):
-        print('Secure sampling is not implemented yet! Falling back to normal sampling.')
+        warnings.warn('Secure sampling is not implemented yet! Falling back to normal sampling.')
         return self._sample_patches(data, labels)
 
     def pca(self):
