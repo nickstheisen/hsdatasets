@@ -150,44 +150,20 @@ class HyperspectralDataset(Dataset):
 
     def _load_data(self):
         self.root_dir.mkdir(parents=True, exist_ok=True)
-        filepath_data = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['img']['name'])
-        filepath_labels = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['gt']['name'])
+        self.filepath_data = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['img']['name'])
+        self.filepath_labels = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['gt']['name'])
 
-        if not filepath_data.is_file():
+        if not self.filepath_data.is_file():
             with TqdmUpTo(unit='B', unit_scale=True, miniters=1,
-                    desc="Downloading {}".format(filepath_data)) as t:
+                    desc="Downloading {}".format(self.filepath_data)) as t:
                 url = DATASETS_CONFIG[self.scene]['img']['url']
-                urlretrieve(url, filename=filepath_data, reporthook=t.update_to)
+                urlretrieve(url, filename=self.filepath_data, reporthook=t.update_to)
 
-        if not filepath_labels.is_file():
+        if not self.filepath_labels.is_file():
             with TqdmUpTo(unit='B', unit_scale=True, miniters=1,
-                    desc="Downloading {}".format(filepath_data)) as t:
+                    desc="Downloading {}".format(self.filepath_labels)) as t:
                 url = DATASETS_CONFIG[self.scene]['gt']['url']
-                urlretrieve(url, filename=filepath_labels, reporthook=t.update_to)
-
-        # dataset specific addressing
-        if self.scene == 'IP':
-            data = loadmat(filepath_data)['indian_pines_corrected']
-            labels = loadmat(filepath_labels)['indian_pines_gt']
-        elif self.scene == 'Salinas':
-            data = loadmat(filepath_data)['salinas_corrected']
-            labels = loadmat(filepath_labels)['salinas_gt']
-        elif self.scene == 'SalinasA':
-            data = loadmat(filepath_data)['salinasA_corrected']
-            labels = loadmat(filepath_labels)['salinasA_gt']
-        elif self.scene == 'PU':
-            data = loadmat(filepath_data)['paviaU']
-            labels = loadmat(filepath_labels)['paviaU_gt']
-        elif self.scene == 'PC':
-            data = loadmat(filepath_data)['pavia']
-            labels = loadmat(filepath_labels)['pavia_gt']
-        elif self.scene == 'KSC':
-            data = loadmat(filepath_data)['KSC']
-            labels = loadmat(filepath_labels)['KSC_gt']
-        elif self.scene == 'Botswana':
-            data = loadmat(filepath_data)['Botswana']
-            labels = loadmat(filepath_labels)['Botswana_gt']
-        return data, labels
+                urlretrieve(url, filename=self.filepath_labels, reporthook=t.update_to)
 
     def _apply_pca(self, data):
         X = np.reshape(data, (-1, data.shape[2]))
@@ -250,26 +226,74 @@ class PaviaU(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='PU', *args, **kwargs)
 
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['paviaU']
+        labels = loadmat(self.filepath_labels)['paviaU_gt']
+        return data, labels
+
+
 class PaviaC(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='PC', *args, **kwargs)
+
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['pavia']
+        labels = loadmat(self.filepath_labels)['pavia_gt']
+        return data, labels
+
 
 class SalinasScene(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='Salinas', *args, **kwargs)
 
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['salinas_corrected']
+        labels = loadmat(self.filepath_labels)['salinas_gt']
+        return data, labels
+
+
 class SalinasA(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='SalinasA', *args, **kwargs)
+
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['salinasA_corrected']
+        labels = loadmat(self.filepath_labels)['salinasA_gt']
+        return data, labels
+
 
 class IndianPines(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='IP', *args, **kwargs)
 
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['indian_pines_corrected']
+        labels = loadmat(self.filepath_labels)['indian_pines_gt']
+        return data, labels
+
+
 class KennedySpaceCenter(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='KSC', *args, **kwargs)
 
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['KSC']
+        labels = loadmat(self.filepath_labels)['KSC_gt']
+        return data, labels
+
 class Botswana(HyperspectralDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(scene='Botswana', *args, **kwargs)
+
+    def _load_data(self):
+        super()._load_data()
+        data = loadmat(self.filepath_data)['Botswana']
+        labels = loadmat(self.filepath_labels)['Botswana_gt']
+        return data, labels
+
