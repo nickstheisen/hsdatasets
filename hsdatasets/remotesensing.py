@@ -8,7 +8,6 @@ from urllib.request import urlretrieve
 import numpy as np
 from sklearn.decomposition import PCA
 from hsdatasets.utils import TqdmUpTo
-from shutil import rmtree
 import warnings
 
 DATASETS_CONFIG = {
@@ -109,7 +108,6 @@ class HyperspectralDataset(Dataset):
     padding_values : sequence or scalar, optional
         Used with 'constant' padding mode. The values to set the padded values for each axis
         (default=0).
-
     secure_sampling : True
         Use secure sampling. No overlap between test and train data.
     samples : ndarray
@@ -120,6 +118,10 @@ class HyperspectralDataset(Dataset):
         Path to hyperspectral data.
     filepath_lables : PosixPath
         Path to labels corresponding to hyperspectral pixels.
+    train : bool
+        True to get training set, False to get test set.
+    train_ratio : float, optional
+        Defines share of training data from all data. Must be in range [0,1] (default=0.6).
 
     Methods
     -------
@@ -142,13 +144,14 @@ class HyperspectralDataset(Dataset):
     _secure_sample_patches(self, data, labels):
         Samples a data patch at each position without overlap between test and training data.
     """
-    def __init__(self, scene, root_dir='~/data',
+    def __init__(self, train, scene, root_dir='~/data',
                  window_size=1,
                  apply_pca=False,
                  pca_dim=75,
                  rm_zero_labels=True,
                  padding_mode='constant',
                  padding_values=0,
+                 train_ratio=0.6,
                  secure_sampling=True,
                  transform=None):
         """
@@ -159,6 +162,8 @@ class HyperspectralDataset(Dataset):
 
         Parameters
         ----------
+        train : bool
+            True to get training set, False to get test set.
         scene : str
             Internal short name of data set. Used as name for directory where data set is stored in.
         root_dir : PosixPath, optional
@@ -176,6 +181,8 @@ class HyperspectralDataset(Dataset):
         padding_values : sequence or scalar, optional
             Used with 'constant' padding mode. The values to set the padded values for each axis
             (default=0).
+        train_ratio : float, optional
+            Defines share of training data from all data. Must be in range [0,1] (default=0.6).
         secure_sampling : True, optional
             Use secure sampling. No overlap between test and train data (default=True).
         transform : functional, optional
@@ -202,6 +209,10 @@ class HyperspectralDataset(Dataset):
         data, labels = self._load_data()
         self.samples = np.array([])
 
+        # train-test split
+        self.train_ratio = train_ratio
+        self.train = train
+
         if apply_pca:
             data = self._apply_pca(data)
 
@@ -210,11 +221,7 @@ class HyperspectralDataset(Dataset):
                     data, labels)
         else :
             self._sample_patches(
-                    data, labels,
-                    self.window_size,
-                    rm_zero_labels,
-                    self.padding_mode,
-                    self.padding_values)
+                    data, labels)
 
     def __len__(self):
         """ Return length of data set."""
@@ -296,6 +303,10 @@ class HyperspectralDataset(Dataset):
         If sampled data already exists their paths are simply imported from 'sample_list.txt'-file.
         To resample delete <root_dir>/<scene>/patches or move to another location.
 
+        If no train-test-split is defined for given test-train-ratio it is created. Path to samples
+        of train set are exported to '<root_dir>/<scene>/patches/train_<train_ratio>.txt' and 
+        samples of test set to '<root_dir>/<scene>/patches/test_<(1-train_ratio)>.txt'
+
         If 'self.rm_zero_labels' is true, data with zero labels are ignored and all labels >=1 are 
         decremented.
 
@@ -308,12 +319,26 @@ class HyperspectralDataset(Dataset):
             Label image corresponding to hyperspectral image cube.
         """
         patchdir = self.root_dir.joinpath('patches')
+        trainlist = f'train_{self.train_ratio}.txt'
+        testlist = f'test_{1-self.train_ratio}.txt'
         if patchdir.is_dir():
-            warnings.warn('Sampled data already exists remove directory'
+            warnings.warn('Sampled data already exist, remove directory'
                     ' "{}" to resample data!'.format(patchdir))
-            
+            samplelist = patchdir.joinpath(trainlist if self.train else testlist)
+
+            # if this split was not defined yet, define it
+            if not samplelist.is_file():
+                samples = list(patchdir.glob('*.mat'))
+                split_idx = (int) (self.train_ratio * len(samples))
+                np.random.shuffle(samples)
+                train = samples[:split_idx]
+                test = samples[split_idx:]
+
+                np.savetxt(patchdir.joinpath(trainlist), train, fmt="%s")
+                np.savetxt(patchdir.joinpath(testlist), test, fmt="%s")
+
             self.samples = np.array([
-                    Path(p) for p in np.loadtxt(patchdir.joinpath('sample_list.txt'), dtype=str)
+                    Path(p) for p in np.loadtxt(samplelist, dtype=str)
                 ])
             return
 
@@ -345,9 +370,15 @@ class HyperspectralDataset(Dataset):
                 sample = {'data': patch, 'label': patchlabel}
                 savemat(samplepath, sample)
         
-        self.samples = np.array(samples)
+        # define test train split
+        split_idx = (int) (self.train_ratio * len(samples))
+        np.random.shuffle(samples)
+        train = samples[:split_idx]
+        test = samples[split_idx:]
+        self.samples = train if self.train else test
 
-        np.savetxt(patchdir.joinpath('sample_list.txt'), self.samples, fmt="%s")
+        np.savetxt(patchdir.joinpath(trainlist), train, fmt="%s")
+        np.savetxt(patchdir.joinpath(testlist), test, fmt="%s")
 
     def _secure_sample_patches(self, data, labels):
         """
