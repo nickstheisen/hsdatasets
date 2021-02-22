@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 from hsdatasets.utils import TqdmUpTo
 import warnings
+from math import ceil
 
 DATASETS_CONFIG = {
         'IP' : {
@@ -138,7 +139,7 @@ class HyperspectralDataset(Dataset):
     _apply_pca(self, data):
         Applies PCA to reduce datas spectral dimensionality.
 
-     _sample_patches(self, data, labels):
+     _random_sample_patches(self, data, labels):
         Samples a data patch at each pixel. 
 
     _secure_sample_patches(self, data, labels):
@@ -220,7 +221,7 @@ class HyperspectralDataset(Dataset):
             self._secure_sample_patches(
                     data, labels)
         else :
-            self._sample_patches(
+            self._random_sample_patches(
                     data, labels)
 
     def __len__(self):
@@ -291,9 +292,9 @@ class HyperspectralDataset(Dataset):
         X = np.reshape(X, (data.shape[0], data.shape[1], self.pca_dim))
         return X
 
-    def _sample_patches(self, data, labels):
+    def _random_sample_patches(self, data, labels):
         """
-        Samples a data patch at each pixel. 
+        Randomly samples data patches at each position and assigns them to test and train set.
         
         The hyperspectral data cube is padded along its spatial dimensions. Then
         a sample patch is extracted at each position. Each patch is stored as a mat-file
@@ -318,74 +319,193 @@ class HyperspectralDataset(Dataset):
         labels : ndarray
             Label image corresponding to hyperspectral image cube.
         """
+
         patchdir = self.root_dir.joinpath('patches')
-        trainlist = f'train_{self.train_ratio}.txt'
-        testlist = f'test_{1-self.train_ratio}.txt'
+        trainlist = f'train_{self.train_ratio:.2f}.txt'
+        testlist = f'test_{1-self.train_ratio:.2f}.txt'
+        
+        if self._check_already_sampled(patchdir, trainlist, testlist):
+            return
+
+        patchdir.mkdir(parents=True, exist_ok=True)
+
+        # sample patches
+        samples = self._sample_patches([data], [labels], patchdir)        
+
+        # define test train split
+        split_idx = (int) (self.train_ratio * len(samples))
+        np.random.shuffle(samples)
+        train_samples = samples[:split_idx]
+        test_samples = samples[split_idx:]
+        self.samples = train_samples if self.train else test_samples
+        
+        # export test train split
+        np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
+        np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
+
+    def _secure_sample_patches(self, data, labels):
+        """
+        Samples a data patch at each position without overlap between test and training data.
+
+        If sampled data already exists their paths are simply imported from 'sample_list.txt'-file.
+        To resample delete <root_dir>/<scene>/patches or move to another location.
+
+        If no train-test-split is defined for given test-train-ratio it is created. Path to samples
+        of train set are exported to '<root_dir>/<scene>/patches/train_<train_ratio>.txt' and 
+        samples of test set to '<root_dir>/<scene>/patches/test_<(1-train_ratio)>.txt'
+
+        If 'self.rm_zero_labels' is true, data with zero labels are ignored and all labels >=1 are 
+        decremented.
+
+        Attributes
+        ----------
+
+        data : ndarray
+            Hyperspectral image from which patches are sampled.
+        labels : ndarray
+            Label image corresponding to hyperspectral image cube.
+
+        """
+
+        # directory to store samples in
+        patchdir = self.root_dir.joinpath('patches')
+        trainlist = f'train_{self.train_ratio:.2f}.txt'
+        testlist = f'test_{1-self.train_ratio:.2f}.txt'
+
+        if self._check_already_sampled(patchdir, trainlist, testlist):
+            return
+
+        patchdir.mkdir(parents=True, exist_ok=True)
+
+        # split image into subimages of size window_size x window_size
+        h, w, _ = data.shape
+        num_subimg_h = ceil(h/self.window_size) # patches along vertical axis
+        num_subimg_w = ceil(w/self.window_size) # patches along horizontal axis
+
+        subimgs = []
+        subimg_labels = []
+
+        for i in range(num_subimg_h):
+            for j in range(num_subimg_w):
+                start_idx_h = i*self.window_size
+                start_idx_w = j*self.window_size
+                end_idx_h = (i+1)*self.window_size
+                end_idx_w = (j+1)*self.window_size
+
+                # end_idx_h and end_idx_w may be greater than height and width of data array
+                if end_idx_h > h:
+                    end_idx_h = h
+                if end_idx_w > w:
+                    end_idx_w = w
+
+                subimgs.append(data[start_idx_h:end_idx_h, start_idx_w:end_idx_w])
+                subimg_labels.append(labels[start_idx_h:end_idx_h, start_idx_w:end_idx_w])
+
+        # shuffle samples
+        samples = list(zip(subimgs, subimg_labels))
+        np.random.shuffle(samples)
+        subimgs, subimg_labels = zip(*samples)
+
+        # count how many pixels have non zero labels and use result to assign approximately
+        # train_ratio share of non zero data to train set and (1-train_ratio) to test set
+        if self.rm_zero_labels:
+            cum_nonzero_labels = np.cumsum([(lbls > 0).sum() for lbls in subimg_labels])
+            split = 0
+            while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < self.train_ratio):
+                split += 1
+        else :
+            split = int((len(subimgs)*self.train_ratio))
+
+        # sample test and training data patches
+        train_data = subimgs[:split]
+        train_label_patches = subimg_labels[:split]
+        test_data = subimgs[split:]
+        test_label_patches = subimg_labels[split:]
+        train_samples = self._sample_patches(train_data, train_label_patches, patchdir)
+        test_samples = self._sample_patches(test_data, test_label_patches, 
+                patchdir, startpatchidx=len(train_data))
+
+        self.samples = train_samples if self.train else test_samples
+        
+        # export test train split
+        np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
+        np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
+
+    def _sample_patches(self, imgs, labelimgs, patchdir, startpatchidx=0):
+        """
+        Samples datapatches from data and stores them in permanent memory. Returns paths to samples.
+
+        data: list
+            List of data to be sampled.
+        labels: list
+            List of labels to be sampled.
+        startpatchidx: int, optional
+            Patchindex to start counting from. To avoid overwriting data in 
+        """
+        samples = []
+        for patchidx, (img, labelimg) in enumerate(zip(imgs, labelimgs)):
+
+            # pad along spatial axes
+            margin = int((self.window_size - 1) / 2)
+            X = np.pad(img, ((margin, margin), (margin, margin), (0,0)), 
+                    mode=self.padding_mode, constant_values=self.padding_values) 
+
+            # split patches
+            for r in range(margin, X.shape[0] - margin):
+                for c in range(margin, X.shape[1] - margin):
+                    patchlabel = labelimg[r-margin, c-margin]
+
+                    # if '0' label is removed '1' is new '0'
+                    if self.rm_zero_labels:
+                        if patchlabel == 0:
+                            continue
+                        else :
+                            patchlabel -= 1
+
+                    patch = X[r - margin:r + margin + 1, c - margin:c + margin + 1]
+                    
+                    # store sample in permanent memory
+                    samplepath = patchdir.joinpath(f'p{startpatchidx + patchidx}_x{r}_y{c}.mat')
+                    samples.append(samplepath)
+                    sample = {'data': patch, 'label': patchlabel}
+                    savemat(samplepath, sample)
+        return np.array(samples)
+
+    def _check_already_sampled(self, patchdir, trainlist, testlist):
+        """ Checks if data was already sampled and loads data if possible.
+            
+            Throws a warning if patchtdir already exists. To resample this directory must be
+            deleted or moved. 
+
+            Raises a RuntimeError if trainlist and testlist do not exists. This is also
+            the case if previously another split than the one defined in the filenames was
+            calculated. Resample to generate a new split. 
+
+            Arguments:
+            ----------
+            patchdir : PosixPath
+                Directory where data patches are stored in.
+            trainlist : str
+                Name of file where train data paths where exported to.
+            testlist : str
+                Name of file where test data paths where exported to
+        """
         if patchdir.is_dir():
             warnings.warn('Sampled data already exist, remove directory'
                     ' "{}" to resample data!'.format(patchdir))
             samplelist = patchdir.joinpath(trainlist if self.train else testlist)
 
-            # if this split was not defined yet, define it
+            # if this split was not defined yet raise exception
             if not samplelist.is_file():
-                samples = list(patchdir.glob('*.mat'))
-                split_idx = (int) (self.train_ratio * len(samples))
-                np.random.shuffle(samples)
-                train = samples[:split_idx]
-                test = samples[split_idx:]
-
-                np.savetxt(patchdir.joinpath(trainlist), train, fmt="%s")
-                np.savetxt(patchdir.joinpath(testlist), test, fmt="%s")
+                raise RuntimeError('The given test-train split is not available.'
+                    ' To generate a new one please remove directory "{}" and resample '
+                    ' data!'.format(patchdir))
 
             self.samples = np.array([
                     Path(p) for p in np.loadtxt(samplelist, dtype=str)
                 ])
-            return
-
-        patchdir.mkdir(parents=True, exist_ok=True)
-
-        # pad along spatial axes
-        margin = int((self.window_size - 1) / 2)
-        X = np.pad(data, ((margin, margin), (margin, margin), (0,0)), 
-                mode=self.padding_mode, constant_values=self.padding_values) 
-
-        # split patches
-        samples = []
-        for r in range(margin, X.shape[0] - margin):
-            for c in range(margin, X.shape[1] - margin):
-                patchlabel = labels[r-margin, c-margin]
-
-                # if '0' label is removed '1' is new '0'
-                if self.rm_zero_labels:
-                    if patchlabel == 0:
-                        continue
-                    else :
-                        patchlabel -= 1
-
-                patch = X[r - margin:r + margin + 1, c - margin:c + margin + 1]
-                
-                # store sample in permanent memory
-                samplepath = patchdir.joinpath(f'x{r}_y{c}.mat')
-                samples.append(samplepath)
-                sample = {'data': patch, 'label': patchlabel}
-                savemat(samplepath, sample)
-        
-        # define test train split
-        split_idx = (int) (self.train_ratio * len(samples))
-        np.random.shuffle(samples)
-        train = samples[:split_idx]
-        test = samples[split_idx:]
-        self.samples = train if self.train else test
-
-        np.savetxt(patchdir.joinpath(trainlist), train, fmt="%s")
-        np.savetxt(patchdir.joinpath(testlist), test, fmt="%s")
-
-    def _secure_sample_patches(self, data, labels):
-        """
-        Samples a data patch at each position without overlap between test and training data.
-        """
-        warnings.warn('Secure sampling is not implemented yet! Falling back to normal sampling.')
-        return self._sample_patches(data, labels)
+            return True
+        return False
 
     def pca(self):
         return self.pca
