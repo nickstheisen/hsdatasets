@@ -4,85 +4,11 @@ import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from scipy.io import loadmat, savemat
-from urllib.request import urlretrieve
 import numpy as np
 from sklearn.decomposition import PCA
-from hsdatasets.utils import TqdmUpTo
 import warnings
 from math import ceil
-
-DATASETS_CONFIG = {
-        'IP' : {
-            'img': {
-                'name': 'Indian_pines_corrected.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/6/67/Indian_pines_corrected.mat'
-            },
-            'gt': {
-                'name' : 'Indian_pines_gt.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/c/c4/Indian_pines_gt.mat'
-            }
-        },
-        'PU' : {
-            'img': {
-                'name' : 'PaviaU.mat',
-                'url'  : 'http://www.ehu.eus/ccwintco/uploads/e/ee/PaviaU.mat'
-            },
-            'gt': {
-                'name' : 'PaviaU_gt',
-                'url'  : 'http://www.ehu.eus/ccwintco/uploads/5/50/PaviaU_gt.mat'
-            }
-        },
-        'Salinas' : {
-            'img': {
-                'name': 'Salinas_corrected.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/a/a3/Salinas_corrected.mat'
-            },
-            'gt': {
-                'name': 'Salinas_gt.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/f/fa/Salinas_gt.mat'
-            }
-        },
-        'SalinasA' : {
-            'img': {
-                'name': 'SalinasA_corrected.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/1/1a/SalinasA_corrected.mat'
-            },
-            'gt': {
-                'name': 'SalinasA_gt.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/a/aa/SalinasA_gt.mat'
-            }
-        },
-        'PC' : {
-            'img': {
-                'name': 'Pavia.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/e/e3/Pavia.mat'
-            },
-            'gt': {
-                'name': 'Pavia_gt.mat',
-                'url' : 'http://www.ehu.eus/ccwintco/uploads/5/53/Pavia_gt.mat'
-            }
-        },
-        'KSC' : {
-            'img': {
-                'name': 'KSC.mat',
-                'url' : 'http://www.ehu.es/ccwintco/uploads/2/26/KSC.mat'
-            },
-            'gt': {
-                'name': 'KSC_gt.mat',
-                'url' : 'http://www.ehu.es/ccwintco/uploads/a/a6/KSC_gt.mat'
-            }
-        },
-        'Botswana' : {
-            'img': {
-                'name': 'Botswana.mat',
-                'url' : 'http://www.ehu.es/ccwintco/uploads/7/72/Botswana.mat'
-            },
-            'gt': {
-                'name': 'Botswana_gt.mat',
-                'url' : 'http://www.ehu.es/ccwintco/uploads/5/58/Botswana_gt.mat'
-            }
-        }
-}
+from skimage import io
 
 class HyperspectralDataset(Dataset):
     """
@@ -411,6 +337,9 @@ class HyperspectralDataset(Dataset):
         if self.rm_zero_labels:
             cum_nonzero_labels = np.cumsum([(lbls > 0).sum() for lbls in subimg_labels])
             split = 0
+            if cum_nonzero_labels[-1] == 0:
+                raise RuntimeError('Labelimage only contains zero labels.')
+            print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
             while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < self.train_ratio):
                 split += 1
         else :
@@ -585,3 +514,51 @@ class Botswana(HyperspectralDataset):
         labels = loadmat(self.filepath_labels)['Botswana_gt']
         return data, labels
 
+class AeroRIT(HyperspectralDataset):
+    def __init__(self, *args, **kwargs):
+        self.labelcolormap = np.asarray(
+                [[153, 0, 0], # << Differs from code in original repo s.t. unspecified gets ID 0
+                [ 255, 0, 0],
+                [ 0, 255, 0],
+                [ 0, 0, 255],
+                [ 0, 255, 255],
+                [ 255, 127, 80]])
+        super().__init__(scene='AeroRIT', *args, **kwargs)
+
+    def encode_labelmap(self, colors):
+        """
+        Takes a colormap, where each color represents one specific label-class and replaces
+        the color value with label ids. `self.labelcolormap` is used for encoding.
+        """
+        colors = colors.astype(int)
+        labels = np.zeros((colors.shape[0], colors.shape[1]), dtype=np.int16)
+        for label_id, color in enumerate(self.labelcolormap):
+            labels[np.where(np.all(color == colors, axis=-1))] = label_id
+
+        return labels
+
+    def _load_data(self):
+        """
+        Downloads data and labels if not existing.
+
+        Creates directory and parent directories <root_dir>/<scene>. 
+        Data set and label image is downloaded into those directories.
+        """
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        self.filepath_data = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['img']['name'])
+        self.filepath_labels = self.root_dir.joinpath(DATASETS_CONFIG[self.scene]['gt']['name'])
+
+        if not self.filepath_data.is_file():
+            print("Downloading {}".format(self.filepath_data))
+            url = DATASETS_CONFIG[self.scene]['img']['url']
+            gdown.download(url=url, output=str(self.filepath_data), quiet=False)
+
+        if not self.filepath_labels.is_file():
+            print("Downloading {}".format(self.filepath_labels))
+            url = DATASETS_CONFIG[self.scene]['gt']['url']
+            gdown.download(url=url, output=str(self.filepath_labels), quiet=False)
+
+        data = np.transpose(io.imread(self.filepath_data), (1,2,0))
+        labels = self.encode_labelmap(io.imread(self.filepath_labels))
+
+        return data, labels

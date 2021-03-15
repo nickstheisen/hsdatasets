@@ -17,6 +17,8 @@ setup(
         "urllib3",
         "numpy",
         "tqdm",
-        "scikit-learn"
+        "scikit-learn",
+        "scikit-image",
+        "gdown"
         ],
 )
