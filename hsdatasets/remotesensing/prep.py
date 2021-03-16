@@ -152,7 +152,7 @@ def check_already_sampled(patchdir, trainlist, testlist):
         testsamples = np.array([
                 Path(p) for p in np.loadtxt(testsamplelist, dtype=str)
             ])
-        return trainsamples, testsamples
+        return trainsamplelist, testsamplelist
     return None
 
 def download_dataset(base_dir, scene):
@@ -278,13 +278,13 @@ def split_random_sampling(datapath, labelpath,
         labels : ndarray
             Label image corresponding to hyperspectral image cube.
         """
-        patchdir = outpath.joinpath('patches').joinpath('random_sampling')
+        patchdir = outpath.joinpath('patches').joinpath('random_sampling').joinpath('{patch_size}_{padding_mode}')
         trainlist = f'train_{train_ratio:.2f}.txt'
         testlist = f'test_{1-train_ratio:.2f}.txt'
         
-        samples = check_already_sampled(patchdir, trainlist, testlist)
-        if samples is not None:
-            return samples
+        sampleslists = check_already_sampled(patchdir, trainlist, testlist)
+        if samplelists is not None:
+            return samplelists
 
         patchdir.mkdir(parents=True, exist_ok=True)
         
@@ -302,13 +302,12 @@ def split_random_sampling(datapath, labelpath,
         np.random.shuffle(samples)
         train_samples = samples[:split_idx]
         test_samples = samples[split_idx:]
-        #self.samples = train_samples if self.train else test_samples
         
         # export test train split
         np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
         np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
         
-        return train_samples, test_samples
+        return patchdir.joinpath(trainlist), patchdir.joinpath(testlist)
 
 
 def split_secure_sampling(datapath, labelpath, 
@@ -342,13 +341,14 @@ def split_secure_sampling(datapath, labelpath,
         """
 
         # directory to store samples in
-        patchdir = outpath.joinpath('patches').joinpath('secure_sampling')
+        patchdir = outpath.joinpath('patches').joinpath('secure_sampling').joinpath(f'{patch_size}_{padding_mode}')
+
         trainlist = f'train_{train_ratio:.2f}.txt'
         testlist = f'test_{1-train_ratio:.2f}.txt'
 
-        samples = check_already_sampled(patchdir, trainlist, testlist)
-        if samples is not None:
-            return samples
+        samplelists = check_already_sampled(patchdir, trainlist, testlist)
+        if samplelists is not None:
+            return samplelists
 
         data, labels = load_data(datapath, labelpath, outpath.name)
 
@@ -387,10 +387,10 @@ def split_secure_sampling(datapath, labelpath,
         # train_ratio share of non zero data to train set and (1-train_ratio) to test set
         if ignore_labels:
             cum_nonzero_labels = np.cumsum(
-                    [np.isin(lbls, ignore_labels).sum() for lbls in subimg_labels])
+                    [np.invert(np.isin(lbls, ignore_labels)).sum() for lbls in subimg_labels])
             split = 0
             if cum_nonzero_labels[-1] == 0:
-                raise RuntimeError('Labelimage only contains zero labels.')
+                raise RuntimeError('Labelimage only contains ignored labels.')
             print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
             while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < train_ratio):
                 split += 1
@@ -422,6 +422,6 @@ def split_secure_sampling(datapath, labelpath,
         np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
         np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
 
-        return train_samples, test_samples
+        return patchdir.joinpath(trainlist), patchdir.joinpath(testlist)
 
 
