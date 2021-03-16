@@ -13,7 +13,7 @@ from torchvision import transforms
 
 if __name__ == '__main__':
     # download data if not already existing
-    filepath_data, filepath_labels = download_dataset(base_dir='~/data', scene='SalinasA')
+    filepath_data, filepath_labels = download_dataset(base_dir='~/data', scene='AeroRIT_reflectance')
 
     # sample data and split into test and trainset
     train_list, test_list = split_secure_sampling(

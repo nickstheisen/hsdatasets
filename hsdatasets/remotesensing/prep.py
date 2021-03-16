@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-
-from pathlib import Path
-from hsdatasets.utils import TqdmUpTo
-import warnings
-import gdown
-from urllib.request import urlretrieve
-from scipy.io import loadmat, savemat
 import numpy as np
 from math import ceil
+import warnings
+from pathlib import Path
+
+from urllib.request import urlretrieve
+import gdown
+
+from hsdatasets.utils import TqdmUpTo
+
+from scipy.io import loadmat, savemat
+from skimage import io
 
 DATASETS_CONFIG = {
         'IP' : {
@@ -115,6 +118,15 @@ DATASETS_CONFIG = {
             }
         }
 }
+
+AERORIT_COLOURLABELMAP= np.asarray(
+                [[153, 0, 0], # << Differs from code in original repo s.t. unspecified gets ID 0
+                [ 255, 0, 0],
+                [ 0, 255, 0],
+                [ 0, 0, 255],
+                [ 0, 255, 255],
+                [ 255, 127, 80]])
+
 def check_already_sampled(patchdir, trainlist, testlist):
     """ Checks if data was already sampled and loads data if possible.
         
@@ -187,14 +199,25 @@ def download_dataset(base_dir, scene):
 
     return filepath_data, filepath_labels
 
+def encode_labelmap(colour_img, colourlabelmap):
+    """
+    Takes a colour image, where each colour represents one specific label-class and replaces
+    the colour value with label ids. The mapping is given by colourlabelmap.
+    """
+    colour_img = colour_img.astype(int)
+    labels = np.zeros((colour_img.shape[0], colour_img.shape[1]), dtype=np.int16)
+    for label_id, colour in enumerate(colourlabelmap):
+        labels[np.where(np.all(colour == colour_img, axis=-1))] = label_id
+
+    return labels
+
 def load_data(datapath, labelpath, scene):
     if datapath.suffix == '.mat':
         data = loadmat(datapath)[DATASETS_CONFIG[scene]['img']['key']]
         labels = loadmat(labelpath)[DATASETS_CONFIG[scene]['gt']['key']]
     elif datapath.suffix == '.tif':
-        data = None
-        labels = None
-        print('tif-loading not implemented yet! Returning None')
+        data = np.transpose(io.imread(datapath), (1,2,0))
+        labels = encode_labelmap(io.imread(labelpath), AERORIT_COLOURLABELMAP)
     else :
         raise RuntimeError('Unknown filetype.')
     return data, labels
@@ -391,9 +414,9 @@ def split_secure_sampling(datapath, labelpath,
             split = 0
             if cum_nonzero_labels[-1] == 0:
                 raise RuntimeError('Labelimage only contains ignored labels.')
-            print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
             while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < train_ratio):
                 split += 1
+            print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
         else :
             split = int((len(subimgs)*train_ratio))
 
@@ -416,8 +439,6 @@ def split_secure_sampling(datapath, labelpath,
                     ignore_labels,
                     startpatchidx=len(train_data))
 
-        #samples = train_samples if self.train else test_samples
-        
         # export test train split
         np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
         np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
