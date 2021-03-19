@@ -6,11 +6,13 @@ from pathlib import Path
 
 from urllib.request import urlretrieve
 import gdown
+from tqdm import tqdm
 
 from hsdatasets.utils import TqdmUpTo
 
-from scipy.io import loadmat, savemat
+from scipy.io import loadmat
 from skimage import io
+import h5py
 
 DATASETS_CONFIG = {
         'IP' : {
@@ -97,24 +99,44 @@ DATASETS_CONFIG = {
                 'key' : 'Botswana_gt'
             }
         },
-        'AeroRIT_reflectance' : {
-            'img': {
-                'name': 'image_hsi_reflectance.tif',
-                'url' : 'https://drive.google.com/uc?id=1OC-g9RdMxtd2lzyrR5Wvd-ioSg-DLN-l'
+        'AeroRIT' : {
+            'img' : {
+                'key' : 'data'
             },
-            'gt': {
-                'name': 'image_labels.tif',
-                'url' : 'https://drive.google.com/uc?id=1e7_x887BiCboCKGNYodm8czHoTHxT8ro'
-            }
-        },
-        'AeroRIT_radiance' : {
-            'img': {
-                'name': 'image_hsi_radiance.tif',
-                'url' : 'https://drive.google.com/uc?id=15dL65NZqJSTRQaZzI9Ai33pLWWiAPnoZ'
+            'gt' : {
+                'key' : 'labels'
             },
-            'gt': {
-                'name': 'image_labels.tif',
-                'url' : 'https://drive.google.com/uc?id=1e7_x887BiCboCKGNYodm8czHoTHxT8ro'
+            'reflectance' : {
+                'img': {
+                    'name': 'image_hsi_reflectance.tif',
+                    'url' : 'https://drive.google.com/uc?id=1OC-g9RdMxtd2lzyrR5Wvd-ioSg-DLN-l'
+                },
+                'gt': {
+                    'name': 'image_labels.tif',
+                    'url' : 'https://drive.google.com/uc?id=1e7_x887BiCboCKGNYodm8czHoTHxT8ro'
+                }
+            },
+            'radiance' : {
+                'img': {
+                    'name': 'image_hsi_radiance.tif',
+                    'url' : 'https://drive.google.com/uc?id=15dL65NZqJSTRQaZzI9Ai33pLWWiAPnoZ'
+                },
+                'gt': {
+                    'name': 'image_labels.tif',
+                    'url' : 'https://drive.google.com/uc?id=1e7_x887BiCboCKGNYodm8czHoTHxT8ro'
+                }
+            },
+            'left' : {
+                'start_col': 0,
+                'end_col': 1728
+            },
+            'mid' : {
+                'start_col': 1728,
+                'end_col': 2240
+            },
+            'right' : {
+                'start_col': 2240,
+                'end_col': 3968
             }
         }
 }
@@ -167,13 +189,25 @@ def check_already_sampled(patchdir, trainlist, testlist):
         return trainsamplelist, testsamplelist
     return None
 
-def download_dataset(base_dir, scene):
+def download_dataset(base_dir, scene, hdf=True):
 
-    base_dir = Path(base_dir).expanduser().joinpath(scene)
+    # setup depends on dataset
+    if len(scene.split('_')) == 1: # default
+        base_dir = Path(base_dir).expanduser().joinpath(scene)
+        filepath_data = base_dir.joinpath(DATASETS_CONFIG[scene]['img']['name'])
+        filepath_labels = base_dir.joinpath(DATASETS_CONFIG[scene]['gt']['name'])
+        
+    elif len(scene.split('_')) == 3: # AeroRIT
+        scene, modality, part = scene.split('_')
+        base_dir = Path(base_dir).expanduser().joinpath(scene)
+        filepath_data = base_dir.joinpath(DATASETS_CONFIG[scene][modality]['img']['name'])
+        filepath_labels = base_dir.joinpath(DATASETS_CONFIG[scene][modality]['gt']['name'])
+    else :
+        raise RuntimeError('Given scene unknown!')
+
     base_dir.mkdir(parents=True, exist_ok=True)
-    filepath_data = base_dir.joinpath(DATASETS_CONFIG[scene]['img']['name'])
-    filepath_labels = base_dir.joinpath(DATASETS_CONFIG[scene]['gt']['name'])
 
+    # download data and load from file
     if filepath_data.suffix == '.mat': # datasets from ehu.es
         if not filepath_data.is_file():
             with TqdmUpTo(unit='B', unit_scale=True, miniters=1,
@@ -186,18 +220,51 @@ def download_dataset(base_dir, scene):
                     desc="Downloading {}".format(filepath_labels)) as t:
                 url = DATASETS_CONFIG[scene]['gt']['url']
                 urlretrieve(url, filename=filepath_labels, reporthook=t.update_to)
+        
+        data = loadmat(filepath_data)[DATASETS_CONFIG[scene]['img']['key']]
+        labels = loadmat(filepath_labels)[DATASETS_CONFIG[scene]['gt']['key']]
+
     elif filepath_data.suffix == '.tif': # aerorit
-        if not filepath_data.is_file():
+        if not filepath_data.is_file(): # download image if necessary
             print("Downloading {}".format(filepath_data))
-            url = DATASETS_CONFIG[scene]['img']['url']
+            url = DATASETS_CONFIG[scene][modality]['img']['url']
             gdown.download(url=url, output=str(filepath_data), quiet=False)
 
-        if not filepath_labels.is_file():
+        if not filepath_labels.is_file(): # download labels if necessary
             print("Downloading {}".format(filepath_labels))
-            url = DATASETS_CONFIG[scene]['gt']['url']
+            url = DATASETS_CONFIG[scene][modality]['gt']['url']
             gdown.download(url=url, output=str(filepath_labels), quiet=False)
+        
+        # extract part of image as defined in Rangnekar et al.
+        base_dir = base_dir.joinpath(modality).joinpath(part)
+        base_dir.mkdir(parents=True, exist_ok=True)
 
-    return filepath_data, filepath_labels
+        # extract defined part of dataset and store in mat file
+        start_col = DATASETS_CONFIG[scene][part]['start_col']
+        end_col = DATASETS_CONFIG[scene][part]['end_col']
+    
+        data = np.transpose(io.imread(filepath_data), (1,2,0))[53:,7:,:]
+        data = data[:, start_col:end_col, :]
+
+        labels = encode_labelmap(io.imread(filepath_labels), AERORIT_COLOURLABELMAP)[53:,7:]
+        labels = labels[:, start_col:end_col]
+        filepath_data = base_dir.joinpath(f'aerorit_{modality}_{part}.h5')
+
+    filepath_hdf = filepath_data.with_suffix('.h5')
+    
+    # export data and labels to hdf
+    if not filepath_hdf.is_file():
+        with h5py.File(filepath_hdf, "w") as f:
+            f.create_dataset("data", data=data)
+            f.create_dataset("labels", data=labels)
+            f.attrs['scene'] = scene
+            if not modality is None:
+                f.attrs['modality'] = modality
+            if not part is None:
+                f.attrs['part'] = part
+        return filepath_hdf
+
+    return filepath_hdf
 
 def encode_labelmap(colour_img, colourlabelmap):
     """
@@ -212,12 +279,10 @@ def encode_labelmap(colour_img, colourlabelmap):
     return labels
 
 def load_data(datapath, labelpath, scene):
+    scene = scene.split('_')[0]
     if datapath.suffix == '.mat':
         data = loadmat(datapath)[DATASETS_CONFIG[scene]['img']['key']]
         labels = loadmat(labelpath)[DATASETS_CONFIG[scene]['gt']['key']]
-    elif datapath.suffix == '.tif':
-        data = np.transpose(io.imread(datapath), (1,2,0))
-        labels = encode_labelmap(io.imread(labelpath), AERORIT_COLOURLABELMAP)
     else :
         raise RuntimeError('Unknown filetype.')
     return data, labels
@@ -225,7 +290,7 @@ def load_data(datapath, labelpath, scene):
 def _sample_patches(imgs, 
         labelimgs, 
         patch_size, 
-        patchdir, 
+        patchgroup, 
         padding_mode, 
         padding_values, 
         ignore_labels,
@@ -240,35 +305,64 @@ def _sample_patches(imgs,
     startpatchidx: int, optional
         Patchindex to start counting from. To avoid overwriting data in 
     """
-    samples = []
-    for patchidx, (img, labelimg) in enumerate(zip(imgs, labelimgs)):
+    samplelist = []
+    imgs = np.array(imgs)
+    labelimgs = np.array(labelimgs)
+    bands = imgs.shape[-1]
 
-        # pad along spatial axes
-        margin = int((patch_size - 1) / 2)
-        X = np.pad(img, ((margin, margin), (margin, margin), (0,0)), 
-                mode=padding_mode, constant_values=padding_values) 
+    # calculate remapping for labels when removing `ignore_labels`
+    max_label = np.unique(labelimgs).max()
+    remaining_labels = np.setdiff1d(np.arange(max_label+1), ignore_labels)
+    label_remap = np.full((max_label+1), -1)
+    for i, val in enumerate(remaining_labels):
+        label_remap[val] = i
 
-        # split patches
-        for r in range(margin, X.shape[0] - margin):
-            for c in range(margin, X.shape[1] - margin):
-                patchlabel = labelimg[r-margin, c-margin]
+    valid_sample_count = np.invert(np.isin(labelimgs, ignore_labels)).sum()
+    print(f'Extracting {valid_sample_count} valid samples...')
 
-                # do not create a sample for 'ignore_labels'
-                if patchlabel in ignore_labels:
-                    continue
-                else :
-                    patchlabel -= 1
+    patchgroup.create_dataset('data', (valid_sample_count, patch_size, patch_size, bands)
+            , dtype=imgs.dtype)
+    patchgroup.create_dataset('labels', (valid_sample_count,1), dtype=labelimgs.dtype)
+    
+    idx = 0
+    with tqdm(total=valid_sample_count) as pbar:
+        for patchidx, (img, labelimg) in enumerate(zip(imgs, labelimgs)):
 
-                patch = X[r - margin:r + margin + 1, c - margin:c + margin + 1]
-                
-                # store sample in permanent memory
-                samplepath = patchdir.joinpath(f'p{startpatchidx + patchidx}_x{r}_y{c}.mat')
-                samples.append(samplepath)
-                sample = {'data': patch, 'label': patchlabel}
-                savemat(samplepath, sample)
-    return np.array(samples)
+            # pad along spatial axes
+            margin = int((patch_size - 1) / 2)
+            X = np.pad(img, ((margin, margin), (margin, margin), (0,0)), 
+                    mode=padding_mode, constant_values=padding_values) 
 
-def split_random_sampling(datapath, labelpath, 
+            # split patches
+            for r in range(margin, X.shape[0] - margin):
+                for c in range(margin, X.shape[1] - margin):
+                    patchlabel = labelimg[r-margin, c-margin]
+
+                    # do not create a sample for 'ignore_labels'
+                    if patchlabel in ignore_labels:
+                        continue
+                    else :
+                        # correct label
+                        patchlabel = label_remap[patchlabel]
+
+                    patch = X[r - margin:r + margin + 1, c - margin:c + margin + 1]
+                    
+                    # store sample in hdf file
+                    patchgroup['data'][idx] = patch
+                    patchgroup['labels'][idx] = patchlabel
+
+                    # update
+                    idx += 1
+                    pbar.update(1)
+
+        patchgroup.attrs['patch_size'] = patch_size
+        patchgroup.attrs['padding_mode'] = padding_mode
+        patchgroup.attrs['padding_values'] = padding_values
+        patchgroup.attrs['ignore_labels'] = ignore_labels
+
+        return valid_sample_count
+
+def split_random_sampling(inpath,
         patch_size, 
         train_ratio,
         outpath,
@@ -301,39 +395,50 @@ def split_random_sampling(datapath, labelpath,
         labels : ndarray
             Label image corresponding to hyperspectral image cube.
         """
-        patchdir = outpath.joinpath('patches').joinpath('random_sampling').joinpath('{patch_size}_{padding_mode}')
-        trainlist = f'train_{train_ratio:.2f}.txt'
-        testlist = f'test_{1-train_ratio:.2f}.txt'
         
-        sampleslists = check_already_sampled(patchdir, trainlist, testlist)
-        if samplelists is not None:
-            return samplelists
+        outdir = outpath.joinpath('random_sampling')
+        outpath = outdir.joinpath(f'{patch_size}_{padding_mode}_{train_ratio:.2f}.h5')
+        
+        if outpath.is_file():
+            warnings.warn('Sampled data already exist, remove directory'
+                ' "{}" to resample data!'.format(outpath))
 
-        patchdir.mkdir(parents=True, exist_ok=True)
-        
-        data, labels = load_data(datapath, labelpath, outpath.name)
-        # sample patches
-        samples = _sample_patches([data], [labels], 
-                    patch_size, 
-                    patchdir, 
-                    padding_mode, 
-                    padding_values, 
-                    ignore_labels)        
+            return outpath
 
-        # define test train split
-        split_idx = (int) (train_ratio * len(samples))
-        np.random.shuffle(samples)
-        train_samples = samples[:split_idx]
-        test_samples = samples[split_idx:]
+        outdir.mkdir(parents=True, exist_ok=True)
         
-        # export test train split
-        np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
-        np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
-        
-        return patchdir.joinpath(trainlist), patchdir.joinpath(testlist)
+        with h5py.File(inpath, 'r') as in_file, h5py.File(outpath, 'w') as out_file:
+            trainlist = f'train_{train_ratio:.2f}.txt'
+            testlist = f'test_{1-train_ratio:.2f}.txt'
+
+            #out_file.attrs = in_file.attrs
+            patchgroup = out_file.create_group('patches')
+            
+            # sample patches
+            samplecount = _sample_patches([in_file['data']], [in_file['labels']], 
+                        patch_size, 
+                        patchgroup, 
+                        padding_mode, 
+                        padding_values, 
+                        ignore_labels)        
+
+            # define test train split
+            split_idx = (int) (train_ratio * samplecount)
+
+            samples = np.arange(samplecount)
+            np.random.shuffle(samples)
+            train_samples = samples[:split_idx]
+            test_samples = samples[split_idx:]
+
+            out_file.create_dataset('trainsample_list', data=train_samples)
+            out_file.create_dataset('testsample_list', data=test_samples)
+            out_file.attrs['train_ratio'] = train_ratio
+            
+        return outpath
 
 
 def split_secure_sampling(datapath, labelpath, 
+        scene,
         patch_size, 
         train_ratio,
         outpath,
