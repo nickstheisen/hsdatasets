@@ -1,6 +1,6 @@
 # hsdatasets
 
-The 'hsdatasets'-package provides pytorch-DataSet wrappers for the most common hyperspectral
+The `hsdatasets`-package provides pytorch-DataSet wrappers for the most common hyperspectral
 data sets with pixel-precise ground-truth annotations. This simplifies the usage of those data sets
 in deep learning applications. 
 
