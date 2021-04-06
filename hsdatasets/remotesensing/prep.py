@@ -126,6 +126,10 @@ DATASETS_CONFIG = {
                     'url' : 'https://drive.google.com/uc?id=1e7_x887BiCboCKGNYodm8czHoTHxT8ro'
                 }
             },
+            'full' : {
+                'start_col': 0,
+                'end_col': 3968
+            },
             'left' : {
                 'start_col': 0,
                 'end_col': 1728
@@ -149,50 +153,28 @@ AERORIT_COLOURLABELMAP= np.asarray(
                 [ 0, 255, 255],
                 [ 255, 127, 80]])
 
-def check_already_sampled(patchdir, trainlist, testlist):
-    """ Checks if data was already sampled and loads data if possible.
-        
-        Throws a warning if patchtdir already exists. To resample this directory must be
-        deleted or moved. 
 
-        Raises a RuntimeError if trainlist and testlist do not exists. This is also
-        the case if previously another split than the one defined in the filenames was
-        calculated. Resample to generate a new split. 
-
-        Arguments:
-        ----------
-        patchdir : PosixPath
-            Directory where data patches are stored in.
-        trainlist : str
-            Name of file where train data paths where exported to.
-        testlist : str
-            Name of file where test data paths where exported to
+def download_dataset(base_dir, scene):
     """
-    if patchdir.is_dir():
-        warnings.warn('Sampled data already exist, remove directory'
-                ' "{}" to resample data!'.format(patchdir))
-        trainsamplelist = patchdir.joinpath(trainlist)
-        testsamplelist = patchdir.joinpath(testlist)
+    Downloads hyperspectral dataset specified by `scene` and corresponding ground-truth labels into
+    `base_dir` if it isn't already existing. Data and labels are then extracted and exported into
+    a single hdf5-file with specified structure. The path to this file is returned.
 
-        # if this split was not defined yet raise exception
-        if not trainsamplelist.is_file():
-            raise RuntimeError('The given test-train split is not available.'
-                ' To generate a new one please remove directory "{}" and resample '
-                ' data!'.format(patchdir))
+    Parameters
+    ----------
+    base_dir : PosixPath, str
+        Base-directory where dataset should be stored in.
+    scene : str
+        String defining a dataset or part of dataset (see DATASET_CONFIGS).
 
-        trainsamples = np.array([
-                Path(p) for p in np.loadtxt(trainsamplelist, dtype=str)
-            ])
-        testsamples = np.array([
-                Path(p) for p in np.loadtxt(testsamplelist, dtype=str)
-            ])
-        return trainsamplelist, testsamplelist
-    return None
-
-def download_dataset(base_dir, scene, hdf=True):
+    Returns
+    -------
+    PosixPath : Path to hdf5-file in which dataset is stored.
+    """
 
     # setup depends on dataset
     if len(scene.split('_')) == 1: # default
+        modality, part = None, None # declaration necessary for instatiation check
         base_dir = Path(base_dir).expanduser().joinpath(scene)
         filepath_data = base_dir.joinpath(DATASETS_CONFIG[scene]['img']['name'])
         filepath_labels = base_dir.joinpath(DATASETS_CONFIG[scene]['gt']['name'])
@@ -238,8 +220,13 @@ def download_dataset(base_dir, scene, hdf=True):
         # extract part of image as defined in Rangnekar et al.
         base_dir = base_dir.joinpath(modality).joinpath(part)
         base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # check early if data exists already to unecessarily loading and encoding data
+        filepath_hdf = base_dir.joinpath(f'aerorit_{modality}_{part}.h5')
+        if filepath_hdf.is_file():
+            return filepath_hdf
 
-        # extract defined part of dataset and store in mat file
+        # extract defined part of dataset
         start_col = DATASETS_CONFIG[scene][part]['start_col']
         end_col = DATASETS_CONFIG[scene][part]['end_col']
     
@@ -248,7 +235,7 @@ def download_dataset(base_dir, scene, hdf=True):
 
         labels = encode_labelmap(io.imread(filepath_labels), AERORIT_COLOURLABELMAP)[53:,7:]
         labels = labels[:, start_col:end_col]
-        filepath_data = base_dir.joinpath(f'aerorit_{modality}_{part}.h5')
+        filepath_data = filepath_hdf
 
     filepath_hdf = filepath_data.with_suffix('.h5')
     
@@ -269,7 +256,7 @@ def download_dataset(base_dir, scene, hdf=True):
 def encode_labelmap(colour_img, colourlabelmap):
     """
     Takes a colour image, where each colour represents one specific label-class and replaces
-    the colour value with label ids. The mapping is given by colourlabelmap.
+    the colour value with label ids. The mapping is defined by array `colourlabelmap`.
     """
     colour_img = colour_img.astype(int)
     labels = np.zeros((colour_img.shape[0], colour_img.shape[1]), dtype=np.int16)
@@ -294,16 +281,34 @@ def _sample_patches(imgs,
         padding_mode, 
         padding_values, 
         ignore_labels,
-        startpatchidx=0):
+        startidx=0):
     """
-    Samples datapatches from data and stores them in permanent memory. Returns paths to samples.
+    Samples patches from data and stores them as dataset in hdf5-file. If dataset is already
+    existing additional data is appended to existing data. 
 
-    data: list
-        List of data to be sampled.
-    labels: list
-        List of labels to be sampled.
-    startpatchidx: int, optional
-        Patchindex to start counting from. To avoid overwriting data in 
+    Parameters
+    ----------
+        imgs: list
+            List of imgs to be sampled.
+        labelimgs: list
+            List of labelmaps corresponding to `imgs`.
+        patch_size: int
+            Size of sampled patches.
+        patchgroup: Group
+            h5py.Group where patches can be stored in.
+        padding_mode: str or function
+            Behaviour of padding. See numpy.pad(...) for further info.
+        padding_values: sequence or scalar
+            Values used for constant padding. See numpy.pad(...) for further info.
+        ignore_labels: list
+            Contains all labels that should be ignored. Samples with those labels are not saved.
+        startidx: int, optional
+            Defines startposition for writing data to dataset.
+
+    Returns
+    -------
+        int: Number of valid samplepatches.
+
     """
     samplelist = []
     imgs = np.array(imgs)
@@ -319,14 +324,23 @@ def _sample_patches(imgs,
 
     valid_sample_count = np.invert(np.isin(labelimgs, ignore_labels)).sum()
     print(f'Extracting {valid_sample_count} valid samples...')
-
-    patchgroup.create_dataset('data', (valid_sample_count, patch_size, patch_size, bands)
-            , dtype=imgs.dtype)
-    patchgroup.create_dataset('labels', (valid_sample_count,1), dtype=labelimgs.dtype)
     
-    idx = 0
+    if ('data' in patchgroup) and ('labels' in patchgroup):
+        # resize existing dataset to append patches from test set
+        patchgroup['data'].resize((patchgroup['data'].shape[0] + valid_sample_count), axis=0)
+        patchgroup['labels'].resize((patchgroup['labels'].shape[0] + valid_sample_count), axis=0)
+    else:
+        patchgroup.create_dataset('data', (valid_sample_count, patch_size, patch_size, bands)
+                , chunks=(1, patch_size, patch_size, bands)
+                , maxshape=(None, patch_size, patch_size, bands)
+                , dtype=imgs.dtype)
+        patchgroup.create_dataset('labels', (valid_sample_count,1)
+                , chunks=True, maxshape=(None, 1)
+                , dtype=labelimgs.dtype)
+    
+    idx = startidx
     with tqdm(total=valid_sample_count) as pbar:
-        for patchidx, (img, labelimg) in enumerate(zip(imgs, labelimgs)):
+        for img, labelimg in zip(imgs, labelimgs):
 
             # pad along spatial axes
             margin = int((patch_size - 1) / 2)
@@ -370,48 +384,54 @@ def split_random_sampling(inpath,
         padding_values=0, 
         ignore_labels=[0]):
         """
-        Randomly samples data patches at each position and assigns them to test and train set.
+        Samples data patches at each position and assigns them to test and train set.
         
         The hyperspectral data cube is padded along its spatial dimensions. Then
-        a sample patch is extracted at each position. Each patch is stored as a mat-file
-        together with its corresponding label in <root_dir>/<scene>/patches/. The data paths are
-        stored in the same directory with name 'sample_list.txt'.
+        a sample patch is extracted at each position. Patches and corresponding labels are stored
+        in hdf5-file. Also two lists are stored as datasets in hdf5-file that contain the indices
+        of train and testpatches in patch-dataset.
 
-        If sampled data already exists their paths are simply imported from 'sample_list.txt'-file.
-        To resample delete <root_dir>/<scene>/patches or move to another location.
+        If sampled data already exists it is loaded. To resample please delete or move the existing
+        file.
 
-        If no train-test-split is defined for given test-train-ratio it is created. Path to samples
-        of train set are exported to '<root_dir>/<scene>/patches/train_<train_ratio>.txt' and 
-        samples of test set to '<root_dir>/<scene>/patches/test_<(1-train_ratio)>.txt'
-
-        If 'self.rm_zero_labels' is true, data with zero labels are ignored and all labels >=1 are 
-        decremented.
-
-        Attributes
+        Parameters
         ----------
 
-        data : ndarray
-            Hyperspectral image from which patches are sampled.
-        labels : ndarray
-            Label image corresponding to hyperspectral image cube.
+        inpath : PosixPath, str
+            Path to hdf5-file containing the data set
+        patch_size: int
+            Size of sampled patches
+        train_ratio: float
+            Proportion of training data from all data.
+        outpath: PosixPath, str
+            Path to hdf5-file where sampled data is exported to
+        padding_mode: str or function
+            Behaviour of padding. See numpy.pad(...) for further info.
+        padding_values: sequence or scalar
+            Values used for constant padding. See numpy.pad(...) for further info.
+        ignore_labels: list
+            Contains all labels that should be ignored. Samples with those labels are not saved.
+        startidx: int, optional
+            Defines startposition for writing data to dataset.
+
+        Returns
+        -------
+        PosixPath : Path to hdf5-file with data samples.
+
         """
         
         outdir = outpath.joinpath('random_sampling')
-        outpath = outdir.joinpath(f'{patch_size}_{padding_mode}_{train_ratio:.2f}.h5')
+        outpath = outdir.joinpath(f'{patch_size}x{patch_size}_{padding_mode}_{train_ratio:.2f}.h5')
         
         if outpath.is_file():
             warnings.warn('Sampled data already exist, remove directory'
                 ' "{}" to resample data!'.format(outpath))
-
             return outpath
 
         outdir.mkdir(parents=True, exist_ok=True)
         
         with h5py.File(inpath, 'r') as in_file, h5py.File(outpath, 'w') as out_file:
-            trainlist = f'train_{train_ratio:.2f}.txt'
-            testlist = f'test_{1-train_ratio:.2f}.txt'
-
-            #out_file.attrs = in_file.attrs
+            out_file.attrs.update(in_file.attrs) # copy attributes
             patchgroup = out_file.create_group('patches')
             
             # sample patches
@@ -436,9 +456,7 @@ def split_random_sampling(inpath,
             
         return outpath
 
-
-def split_secure_sampling(datapath, labelpath, 
-        scene,
+def split_secure_sampling(inpath,
         patch_size, 
         train_ratio,
         outpath,
@@ -446,108 +464,130 @@ def split_secure_sampling(datapath, labelpath,
         padding_values=0, 
         ignore_labels=[0]):
         """
-        Samples a data patch at each position without overlap between test and training data.
+        Samples data patch at each position without overlap between test and train data.
+        
+        The hyperspectral data cube is divided into non-overlapping subimages. These subimages
+        are divided into train and test data as specified by `train_ratio`. Each subimage is
+        then padded and sampled at each position to yield a patch for each position. The assignment 
+        of nonoverlapping subimages into train and test set before random sampling avoids data 
+        leakage.
+        
+        Patches and corresponding labels are stored
+        in hdf5-file. Also two lists are stored as datasets in hdf5-file that contain the indices
+        of train and testpatches in patch-dataset.
 
-        If sampled data already exists their paths are simply imported from 'sample_list.txt'-file.
-        To resample delete <root_dir>/<scene>/patches or move to another location.
+        If sampled data already exists it is loaded. To resample please delete or move the existing
+        file.
 
-        If no train-test-split is defined for given test-train-ratio it is created. Path to samples
-        of train set are exported to '<root_dir>/<scene>/patches/train_<train_ratio>.txt' and 
-        samples of test set to '<root_dir>/<scene>/patches/test_<(1-train_ratio)>.txt'
-
-        If 'self.rm_zero_labels' is true, data with zero labels are ignored and all labels >=1 are 
-        decremented.
-
-        Attributes
+        Parameters
         ----------
 
-        data : ndarray
-            Hyperspectral image from which patches are sampled.
-        labels : ndarray
-            Label image corresponding to hyperspectral image cube.
+        inpath : PosixPath, str
+            Path to hdf5-file containing the data set
+        patch_size: int
+            Size of sampled patches
+        train_ratio: float
+            Proportion of training data from all data.
+        outpath: PosixPath, str
+            Path to hdf5-file where sampled data is exported to
+        padding_mode: str or function
+            Behaviour of padding. See numpy.pad(...) for further info.
+        padding_values: sequence or scalar
+            Values used for constant padding. See numpy.pad(...) for further info.
+        ignore_labels: list
+            Contains all labels that should be ignored. Samples with those labels are not saved.
+        startidx: int, optional
+            Defines startposition for writing data to dataset.
+
+        Returns
+        -------
+        PosixPath : Path to hdf5-file with data samples.
 
         """
+        outdir = outpath.joinpath('secure_sampling')
+        outpath = outdir.joinpath(f'{patch_size}x{patch_size}_{padding_mode}_{train_ratio:.2f}.h5')
+        
+        if outpath.is_file():
+            warnings.warn('Sampled data already exist, remove directory'
+                ' "{}" to resample data!'.format(outpath))
+            return outpath
 
-        # directory to store samples in
-        patchdir = outpath.joinpath('patches').joinpath('secure_sampling').joinpath(f'{patch_size}_{padding_mode}')
+        outdir.mkdir(parents=True, exist_ok=True)
+        
+        with h5py.File(inpath, 'r') as in_file, h5py.File(outpath, 'w') as out_file:
+            out_file.attrs.update(in_file.attrs) # copy attributes
+            patchgroup = out_file.create_group('patches')
 
-        trainlist = f'train_{train_ratio:.2f}.txt'
-        testlist = f'test_{1-train_ratio:.2f}.txt'
-
-        samplelists = check_already_sampled(patchdir, trainlist, testlist)
-        if samplelists is not None:
-            return samplelists
-
-        data, labels = load_data(datapath, labelpath, outpath.name)
-
-        patchdir.mkdir(parents=True, exist_ok=True)
-
-        # split image into subimages of size patch_size x patch_size
-        h, w, _ = data.shape
-        num_subimg_h = ceil(h/patch_size) # patches along vertical axis
-        num_subimg_w = ceil(w/patch_size) # patches along horizontal axis
-
-        subimgs = []
-        subimg_labels = []
-
-        for i in range(num_subimg_h):
-            for j in range(num_subimg_w):
-                start_idx_h = i*patch_size
-                start_idx_w = j*patch_size
-                end_idx_h = (i+1)*patch_size
-                end_idx_w = (j+1)*patch_size
-
-                # end_idx_h and end_idx_w may be greater than height and width of data array
-                if end_idx_h > h:
-                    end_idx_h = h
-                if end_idx_w > w:
-                    end_idx_w = w
-
-                subimgs.append(data[start_idx_h:end_idx_h, start_idx_w:end_idx_w])
-                subimg_labels.append(labels[start_idx_h:end_idx_h, start_idx_w:end_idx_w])
-
-        # shuffle samples
-        samples = list(zip(subimgs, subimg_labels))
-        np.random.shuffle(samples)
-        subimgs, subimg_labels = zip(*samples)
-
-        # count how many pixels have non 'ignore_labels' and use result to assign approximately
-        # train_ratio share of non zero data to train set and (1-train_ratio) to test set
-        if ignore_labels:
-            cum_nonzero_labels = np.cumsum(
-                    [np.invert(np.isin(lbls, ignore_labels)).sum() for lbls in subimg_labels])
-            split = 0
-            if cum_nonzero_labels[-1] == 0:
-                raise RuntimeError('Labelimage only contains ignored labels.')
-            while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < train_ratio):
-                split += 1
-            print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
-        else :
-            split = int((len(subimgs)*train_ratio))
-
-        # sample test and training data patches
-        train_data = subimgs[:split]
-        train_label_patches = subimg_labels[:split]
-        test_data = subimgs[split:]
-        test_label_patches = subimg_labels[split:]
-        train_samples = _sample_patches(train_data, train_label_patches, 
-                    patch_size, 
-                    patchdir, 
-                    padding_mode, 
-                    padding_values, 
-                    ignore_labels)
-        test_samples = _sample_patches(test_data, test_label_patches, 
-                    patch_size, 
-                    patchdir, 
-                    padding_mode, 
-                    padding_values, 
-                    ignore_labels,
-                    startpatchidx=len(train_data))
-
-        # export test train split
-        np.savetxt(patchdir.joinpath(trainlist), train_samples, fmt="%s")
-        np.savetxt(patchdir.joinpath(testlist), test_samples, fmt="%s")
-
-        return patchdir.joinpath(trainlist), patchdir.joinpath(testlist)
+            data, labels = in_file['data'], in_file['labels']
 
 
+            # split image into subimages of size patch_size x patch_size
+            h, w, _ = data.shape
+            num_subimg_h = ceil(h/patch_size) # patches along vertical axis
+            num_subimg_w = ceil(w/patch_size) # patches along horizontal axis
+
+            subimgs = []
+            subimg_labels = []
+
+            for i in range(num_subimg_h):
+                for j in range(num_subimg_w):
+                    start_idx_h = i*patch_size
+                    start_idx_w = j*patch_size
+                    end_idx_h = (i+1)*patch_size
+                    end_idx_w = (j+1)*patch_size
+
+                    # end_idx_h and end_idx_w may be greater than height and width of data array
+                    if end_idx_h > h:
+                        end_idx_h = h
+                    if end_idx_w > w:
+                        end_idx_w = w
+
+                    subimgs.append(data[start_idx_h:end_idx_h, start_idx_w:end_idx_w])
+                    subimg_labels.append(labels[start_idx_h:end_idx_h, start_idx_w:end_idx_w])
+
+            # shuffle samples
+            samples = list(zip(subimgs, subimg_labels))
+            np.random.shuffle(samples)
+            subimgs, subimg_labels = zip(*samples)
+
+            # count how many pixels have non 'ignore_labels' and use result to assign approximately
+            # train_ratio share of non zero data to train set and (1-train_ratio) to test set
+            if ignore_labels:
+                cum_nonzero_labels = np.cumsum(
+                        [np.invert(np.isin(lbls, ignore_labels)).sum() for lbls in subimg_labels])
+                split = 0
+                if cum_nonzero_labels[-1] == 0:
+                    raise RuntimeError('Labelimage only contains ignored labels.')
+                while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < train_ratio):
+                    split += 1
+                #print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
+            else :
+                split = int((len(subimgs)*train_ratio))
+
+            # sample test and training data patches
+            train_subimgs = subimgs[:split]
+            train_subimg_labels = subimg_labels[:split]
+            test_subimgs = subimgs[split:]
+            test_subimg_labels = subimg_labels[split:]
+            train_samplecount = _sample_patches(train_subimgs, train_subimg_labels, 
+                        patch_size, 
+                        patchgroup, 
+                        padding_mode, 
+                        padding_values, 
+                        ignore_labels)
+            test_samplecount = _sample_patches(test_subimgs, test_subimg_labels, 
+                        patch_size, 
+                        patchgroup, 
+                        padding_mode, 
+                        padding_values, 
+                        ignore_labels,
+                        startidx=train_samplecount)
+
+            train_samples = np.arange(train_samplecount)
+            test_samples = np.arange(train_samplecount, train_samplecount+test_samplecount)
+
+            out_file.create_dataset('trainsample_list', data=train_samples)
+            out_file.create_dataset('testsample_list', data=test_samples)
+            out_file.attrs['train_ratio'] = train_ratio
+
+        return outpath

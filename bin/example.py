@@ -19,16 +19,15 @@ if __name__ == '__main__':
     dataset_path = download_dataset(base_dir='~/data', scene=scene)
     
     # sample data and split into test and trainset
-    filepath = split_random_sampling(dataset_path, 1, 0.7, dataset_path.parents[0])
+    filepath = split_secure_sampling(dataset_path, 1, 0.7, dataset_path.parents[0])
 
     # create dataset
-    #transform = transforms.Compose([ToTensor()])
-    #salinasa_train = RemoteSensingDataset(train=True, samplelist=train_list, apply_pca=True, pca_dim=75, transform=transform)
-
+    transform = transforms.Compose([ToTensor()])
+    salinasa_train = RemoteSensingDataset(filepath, train=True, apply_pca=True, pca_dim=10, transform=transform)
     # create dataloader
-    #salinasa_trainloader = torch.utils.data.DataLoader(salinasa_train,
-    #        batch_size=4, shuffle=True, num_workers=2)
+    salinasa_trainloader = torch.utils.data.DataLoader(salinasa_train,
+            batch_size=4, shuffle=True, num_workers=2)
 
-    #for i, data in enumerate(salinasa_trainloader, 0):
-    #    inputs, labels = data
-    #    print(i, inputs.shape)
+    for i, data in enumerate(salinasa_trainloader, 0):
+        inputs, labels = data
+        print(i, inputs.shape)

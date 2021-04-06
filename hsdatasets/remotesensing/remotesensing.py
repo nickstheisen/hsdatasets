@@ -8,7 +8,8 @@ import numpy as np
 from sklearn.decomposition import PCA
 import warnings
 from math import ceil
-from skimage import io
+
+import h5py
 
 class RemoteSensingDataset(Dataset):
     """
@@ -16,18 +17,16 @@ class RemoteSensingDataset(Dataset):
 
     Attributes
     ----------
-    samplelist : PosixPath
-        Path to list of presampled hyperspectral patches (.txt).
-    scene : str
-        Internal short name of data set. Used as name for directory where data set is stored in.
-    transform : functional
-        Transformations applied to data samples.
+    filepath : PosixPath
+        Path to file containing train and test data (.h5, .hdf5).
+    train : bool
+        Defines if train or test data is returned.
     apply_pca : bool
         Defines if dimensionality is reduced with PCA.
     pca_dim : int
         Number of dimensions that data is reduced to.
-    samples : ndarray
-        List of paths to data samples.
+    transform : functional
+        Transformations applied to data samples.
     pca : object
         Stores sklearn.decomposition.PCA object that is used to reduced dimensionality
     train : bool
@@ -46,112 +45,100 @@ class RemoteSensingDataset(Dataset):
         Applies PCA to reduce datas spectral dimensionality.
 
     """
-    def __init__(self, train, samplelist,
+    def __init__(self, filepath, train,
                  apply_pca=False,
                  pca_dim=75,
                  transform=None):
-        """
-        Instantiates hyperspectral dataset class.
 
-        During instantiation the dataset is downloaded if necessary and data samples are 
-        extracted and stored on in persistent memory as defined by 'root_dir' and 'scene'.
+        self._file = h5py.File(filepath, 'r')
+        self._samplelist = self._file['trainsample_list'] if train else self._file['testsample_list']
 
-        Parameters
-        ----------
-        train : bool
-            True to get training set, False to get test set.
-        scene : str
-            Internal short name of data set. Used as name for directory where data set is stored in.
-        samplelist : PosixPath
-            Path to list of presampled hyperspectral patches (.txt).
-        apply_pca : bool, optional
-            Defines if dimensionality is reduced with PCA (default=False).
-        pca_dim : int, optional
-            Number of dimensions that data is reduced to (default=75).
-        transform : functional, optional
-            Transformations applied to data samples. (default='None')
-        """
+        self._transform = transform
+        self._apply_pca = apply_pca
+        self._pca_dim = pca_dim
 
-        # dataset config
-        self.samplelist = Path(samplelist).expanduser()
-
-        # load list of patches from samplelist
-        self.samples = np.array([
-                    Path(p) for p in np.loadtxt(self.samplelist, dtype=str)
-                    ])
-        # data processing config
-        self.transform = transform
-        self.apply_pca = apply_pca
-        self.pca_dim = pca_dim
-
-        self.train = train
-
+        self._train = train
+        
         if apply_pca:
-            self.pca = self._pca(self.samples, self.pca_dim)
+            self._pca = self.calc_pca(self._file['patches']['data'], self._pca_dim)
 
     def __len__(self):
         """ Return length of data set."""
-        return self.samples.shape[0]
+        return self._samplelist.shape[0]
 
     def __getitem__(self, idx):
         """ 
         Return sample in data set at position 'idx'.
 
-        Data patch and corresponding are loaded from hard disk. The path to it is taken
-        from 'self.samples' list. Transformations defined by 'self.transform' are applied 
-        before returning the samples.
+        Data patch and corresponding are loaded from hard disk. Transformations defined in
+        `self._transform` are applied before returning the samples.
 
         Attributes:
         -----------
         idx : int
             Position of data in sample list.
         """
+        
         if torch.is_tensor(idx):
             idx = idx.tolist()
+
+        pos = self._samplelist[idx]
+
+        patch = self._file['patches']['data'][pos]
+        label = self._file['patches']['labels'][pos]
         
-        sample = loadmat(self.samples[idx])
-        patch = np.array([sample['data']])
-
-        # apply precomputed pca
-        if self.pca:
+        # apply pca
+        if self._apply_pca:
             shape = patch.shape
-            patch = np.reshape(patch, (-1, patch.shape[3]))
+            patch = np.reshape(patch, (-1, patch.shape[2]))
             patch = self.pca.transform(patch)
-            patch = np.reshape(patch, (shape[0],shape[1], shape[2], self.pca_dim))
-            
-        label = sample['label'].squeeze()
-        patch = patch.astype('float').transpose(0,3,2,1) # convert to NCHW-order
-
+            patch = np.reshape(patch, (shape[0], shape[1], self._pca_dim))
+    
         sample = (patch, label)
 
-        if self.transform:
-            sample = self.transform(sample)
+        if self._transform:
+            sample = self._transform(sample)
 
         return sample
 
     @staticmethod
-    def _pca(samples, dim):
+    def calc_pca(patches, dim):
         """
-        Applies PCA to reduce datas spectral dimensionality.
-
-        sklearn.decomposition.PCA is applied to data to reduce dimensionality. 
-        The object is stored in member variable to use e.g. for inverse transformation.
+        Calculates PCA to reduce the data's spectral dimensionality. Resulting PCA-object is
+        returned. sklearn.decomposition.PCA is applied to data to reduce dimensionality. 
         """
 
         # get all samples
         X = []
-        shape = loadmat(samples[0])['data'].shape
+        shape = patches[0].shape
         cx, cy = shape[0]//2, shape[1]//2
-        for sample in samples:
+        for patch in patches:
            # because of patch sampling only center pixel is relevant
-           X.append(loadmat(sample)['data'][cx,cy,:])
+           # all other pixels are padding
+           X.append(patch[cx,cy,:])
         
         # fit pca
         X = np.array(X)
-        print(X.shape)
         pca = PCA(n_components=dim, whiten=True)
         pca.fit(X)
         return pca
+    
+    @property
+    def pca(self):
+        """
+        Returns pca object or None of if it does not exist.
+        """
+        return self._pca
 
-    def get_pca(self):
-        return self.pca
+    @pca.setter
+    def pca(self, value):
+        """
+        Set pca Object.
+        """
+        self._pca = value
+        if value is None:
+            self._apply_pca = False
+            self._pca_dim = None
+        else : 
+            self._apply_pca = True
+            self._pca_dim = value.n_components
