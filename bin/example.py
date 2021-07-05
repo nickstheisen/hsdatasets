@@ -19,7 +19,7 @@ if __name__ == '__main__':
     dataset_path = download_dataset(base_dir='~/data', scene=scene)
     
     # sample data and split into test and trainset
-    filepath = split_secure_sampling(dataset_path, 1, 0.7, dataset_path.parents[0])
+    filepath = split_secure_sampling(dataset_path, 7, 0.7, dataset_path.parents[0])
 
     # create dataset
     transform = transforms.Compose([ToTensor()])

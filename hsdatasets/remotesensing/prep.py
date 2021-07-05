@@ -311,18 +311,23 @@ def _sample_patches(imgs,
 
     """
     samplelist = []
-    imgs = np.array(imgs)
-    labelimgs = np.array(labelimgs)
-    bands = imgs.shape[-1]
+    
+    # number of bands should be constant, therefore the dimensionality can be read from any 
+    # sub img
+    bands = imgs[0].shape[-1]
 
     # calculate remapping for labels when removing `ignore_labels`
-    max_label = np.unique(labelimgs).max()
+    # flatten labelimgs and convert to numpy array to use np.unique function on it
+    flattened_labelimgs = np.concatenate([labelimg.reshape(-1) for labelimg in labelimgs])
+    max_label = np.unique(flattened_labelimgs).max()
     remaining_labels = np.setdiff1d(np.arange(max_label+1), ignore_labels)
     label_remap = np.full((max_label+1), -1)
     for i, val in enumerate(remaining_labels):
         label_remap[val] = i
 
-    valid_sample_count = np.invert(np.isin(labelimgs, ignore_labels)).sum()
+    valid_sample_count = 0
+    for labelimg in labelimgs:
+        valid_sample_count += np.invert(np.isin(labelimg, ignore_labels)).sum()
     print(f'Extracting {valid_sample_count} valid samples...')
     
     if ('data' in patchgroup) and ('labels' in patchgroup):
@@ -333,12 +338,13 @@ def _sample_patches(imgs,
         patchgroup.create_dataset('data', (valid_sample_count, patch_size, patch_size, bands)
                 , chunks=(1, patch_size, patch_size, bands)
                 , maxshape=(None, patch_size, patch_size, bands)
-                , dtype=imgs.dtype)
+                , dtype=imgs[0].dtype) # datatype should be the same for all imgs
         patchgroup.create_dataset('labels', (valid_sample_count,1)
                 , chunks=True, maxshape=(None, 1)
-                , dtype=labelimgs.dtype)
+                , dtype=labelimgs[0].dtype) # datatype should be the same for all labelimgs
     
     idx = startidx
+    print(len(imgs))
     with tqdm(total=valid_sample_count) as pbar:
         for img, labelimg in zip(imgs, labelimgs):
 
@@ -360,7 +366,6 @@ def _sample_patches(imgs,
                         patchlabel = label_remap[patchlabel]
 
                     patch = X[r - margin:r + margin + 1, c - margin:c + margin + 1]
-                    
                     # store sample in hdf file
                     patchgroup['data'][idx] = patch
                     patchgroup['labels'][idx] = patchlabel
