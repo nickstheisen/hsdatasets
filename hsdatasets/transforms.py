@@ -5,7 +5,7 @@ class ToTensor(object):
 
     def __call__(self, sample):
         patch, label = sample
-        patch = torch.from_numpy(patch)
+        patch = torch.from_numpy(patch.astype(float))
         label = torch.from_numpy(label)
 
         return (patch.type(torch.float32), label.type(torch.long))
