@@ -344,7 +344,6 @@ def _sample_patches(imgs,
                 , dtype=labelimgs[0].dtype) # datatype should be the same for all labelimgs
     
     idx = startidx
-    print(len(imgs))
     with tqdm(total=valid_sample_count) as pbar:
         for img, labelimg in zip(imgs, labelimgs):
 
@@ -440,7 +439,7 @@ def split_random_sampling(inpath,
             patchgroup = out_file.create_group('patches')
             
             # sample patches
-            samplecount = _sample_patches([in_file['data']], [in_file['labels']], 
+            samplecount = _sample_patches([in_file['data'].value], [in_file['labels'].value], 
                         patch_size, 
                         patchgroup, 
                         padding_mode, 
