@@ -9,3 +9,23 @@ class ToTensor(object):
         label = torch.from_numpy(label)
 
         return (patch.type(torch.float32), label.type(torch.long))
+
+class InsertEmptyChannelDim(object):
+    """ Insert Empty Channel dimension to apply 3D-Convolutions to hyperspectral images tensors."""
+
+    def __call__(self, sample):
+        patch, label = sample
+        patch = torch.unsqueeze(patch, 0)
+
+        return (patch, label)
+
+class PermuteData(object):
+    """ Permutes sample-data dimensions as defined in `new_order`. """
+    def __init__(self, new_order):
+        self.new_order = new_order
+
+    def __call__(self, sample):
+        patch, label = sample
+        patch = patch.permute(0,3,1,2)
+
+        return (patch, label)

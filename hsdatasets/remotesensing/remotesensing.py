@@ -1,15 +1,128 @@
 #!/usr/bin/env python
 
-import torch
-from torch.utils.data import Dataset
 from pathlib import Path
 from scipy.io import loadmat, savemat
 import numpy as np
 from sklearn.decomposition import PCA
 import warnings
 from math import ceil
-
+from typing import List, Any
 import h5py
+
+import torch
+from torch.utils.data import Dataset, DataLoader
+import pytorch_lightning as pl
+from torchvision import transforms
+
+from .prep import download_dataset, split_random_sampling, split_valid_sampling
+from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData
+
+
+class RSDataset(pl.LightningDataModule):
+
+    def __init__(
+            self,
+            base_dir: str,
+            num_workers: int = 8,
+            batch_size: int = 32,
+            dataset_name: str = 'AeroRIT_radiance_mid',
+            sampling_method: str = 'valid',
+            patch_size: int = 7,
+            train_prop: float = 0.7, # train proportion (of all data)
+            val_prop: float = 0.1, # validation proportion (of all data)
+            padding_mode: str = 'constant',
+            padding_values = 0, # List[int] or int
+            ignore_labels: List[int] = [0],
+            apply_pca: bool = False,
+            pca_dim: int = 75,
+    ):
+        super().__init__()
+        self.base_dir = base_dir
+        self.num_workers = num_workers
+        self.batch_size = batch_size
+        self.dataset_name = dataset_name
+        self.sampling_method = sampling_method
+        self.patch_size = patch_size
+        self.train_prop = train_prop
+        self.val_prop = val_prop
+        self.padding_mode = padding_mode
+        self.padding_values = padding_values
+        self.ignore_labels = ignore_labels
+        self.apply_pca = apply_pca
+        self.pca_dim = pca_dim
+
+    def prepare_data(self):
+        # download data if not already existing
+        self.dataset_path = download_dataset(base_dir=self.base_dir, scene=self.dataset_name)
+
+        self.transform = transforms.Compose([
+            ToTensor(),
+            InsertEmptyChannelDim(),
+            PermuteData(new_order=[0,3,1,2])])
+
+        # sample data and split into train and test set
+        if self.sampling_method == 'valid':
+            self.filepath = split_valid_sampling(
+                    inpath=self.dataset_path, 
+                    patch_size=self.patch_size, 
+                    train_prop=self.train_prop, 
+                    val_prop=self.val_prop,
+                    outpath=self.dataset_path.parents[0],
+                    padding_mode=self.padding_mode,
+                    padding_values=self.padding_values,
+                    ignore_labels=self.ignore_labels)
+        elif self.sampling_method == 'random':
+            self.filepath = split_random_sampling(
+                    inpath=self.dataset_path, 
+                    patch_size=self.patch_size, 
+                    train_prop=self.train_prop, 
+                    val_prop=self.val_prop,
+                    outpath=self.dataset_path.parents[0],
+                    padding_mode=self.padding_mode,
+                    padding_values=self.padding_values,
+                    ignore_labels=self.ignore_labels)
+        else:
+            raise RuntimeError(f'Sampling method {self.sampling_method} unknonw')
+        
+    def train_dataloader(self):
+        train_set = RemoteSensingDataset(
+                filepath=self.filepath,
+                split_type='train',
+                apply_pca=self.apply_pca,
+                pca_dim=self.pca_dim,
+                transform=self.transform)
+        train_loader = DataLoader(train_set, 
+                batch_size=self.batch_size, 
+                shuffle=True, 
+                num_workers=self.num_workers)
+        return train_loader
+
+
+    def val_dataloader(self):
+        val_set = RemoteSensingDataset(
+                filepath=self.filepath,
+                split_type='validation',
+                apply_pca=self.apply_pca,
+                pca_dim=self.pca_dim,
+                transform=self.transform)
+        val_loader = DataLoader(val_set,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers)
+        return val_loader
+
+    def test_dataloader(self):
+        test_set = RemoteSensingDataset(
+                filepath=self.filepath,
+                split_type='test',
+                apply_pca=self.apply_pca,
+                pca_dim=self.pca_dim,
+                transform=self.transform)
+        test_loader = DataLoader(test_set,
+                batch_isze=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers)
+        return test_loader
 
 class RemoteSensingDataset(Dataset):
     """
@@ -17,20 +130,18 @@ class RemoteSensingDataset(Dataset):
 
     Attributes
     ----------
-    filepath : PosixPath
+    _filepath : PosixPath
         Path to file containing train and test data (.h5, .hdf5).
-    train : bool
-        Defines if train or test data is returned.
-    apply_pca : bool
+    _split_type : str
+        Defines if train, validation or test data is returned.
+    _apply_pca : bool
         Defines if dimensionality is reduced with PCA.
-    pca_dim : int
+    _pca_dim : int
         Number of dimensions that data is reduced to.
-    transform : functional
+    _transform : functional
         Transformations applied to data samples.
-    pca : object
+    _pca : object
         Stores sklearn.decomposition.PCA object that is used to reduced dimensionality
-    train : bool
-        True to get training set, False to get test set.
 
     Methods
     -------
@@ -45,19 +156,27 @@ class RemoteSensingDataset(Dataset):
         Applies PCA to reduce datas spectral dimensionality.
 
     """
-    def __init__(self, filepath, train,
+    def __init__(self, filepath, split_type,
                  apply_pca=False,
                  pca_dim=75,
                  transform=None):
 
         self._file = h5py.File(filepath, 'r')
-        self._samplelist = self._file['trainsample_list'] if train else self._file['testsample_list']
+        if split_type == 'train':
+            self._samplelist = self._file['trainsample_list']
+        elif split_type == 'validation':
+            self._samplelist = self._file['valsample_list']
+        elif split_type == 'test':
+            self._samplelist = self._file['testsample_list']
+        else:
+            raise RuntimeError(f'`split_type` {split_type} is unknown. Use `train`, `test` '
+                    'or `validation instead!')
 
         self._transform = transform
         self._apply_pca = apply_pca
         self._pca_dim = pca_dim
 
-        self._train = train
+        self._split_type = split_type
         
         if apply_pca:
             self._pca = self.calc_pca(self._file['patches']['data'], self._pca_dim)

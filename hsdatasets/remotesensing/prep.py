@@ -153,6 +153,9 @@ AERORIT_COLOURLABELMAP= np.asarray(
                 [ 0, 255, 255],
                 [ 255, 127, 80]])
 
+def list_datasets():
+    dataset_list = ['IP', 'PU', 'Salinas', 'SalinasA', 'PC', 'KSC', 'Botswana', 'AeroRIT_radiance_full', 'AeroRIT_radiance_left', 'AeroRIT_radiance_mid', 'AeroRIT_radiance_right', 'AeroRIT_reflectance_full', 'AeroRIT_reflectance_left', 'AeroRIT_reflectance_mid', 'AeroRIT_reflectance_right']
+    return dataset_list
 
 def download_dataset(base_dir, scene):
     """
@@ -221,7 +224,7 @@ def download_dataset(base_dir, scene):
         base_dir = base_dir.joinpath(modality).joinpath(part)
         base_dir.mkdir(parents=True, exist_ok=True)
         
-        # check early if data exists already to unecessarily loading and encoding data
+        # check early if data exists already to avoid unecessarily loading and encoding data
         filepath_hdf = base_dir.joinpath(f'aerorit_{modality}_{part}.h5')
         if filepath_hdf.is_file():
             return filepath_hdf
@@ -382,7 +385,8 @@ def _sample_patches(imgs,
 
 def split_random_sampling(inpath,
         patch_size, 
-        train_ratio,
+        train_prop,
+        val_prop,
         outpath,
         padding_mode='constant', 
         padding_values=0, 
@@ -405,8 +409,10 @@ def split_random_sampling(inpath,
             Path to hdf5-file containing the data set
         patch_size: int
             Size of sampled patches
-        train_ratio: float
+        train_prop: float
             Proportion of training data from all data.
+        val_prop: float
+            Proportion of validation data from all data.
         outpath: PosixPath, str
             Path to hdf5-file where sampled data is exported to
         padding_mode: str or function
@@ -425,7 +431,7 @@ def split_random_sampling(inpath,
         """
         
         outdir = outpath.joinpath('random_sampling')
-        outpath = outdir.joinpath(f'{patch_size}x{patch_size}_{padding_mode}_{train_ratio:.2f}.h5')
+        outpath = outdir.joinpath(f'{patch_size}x{patch_size}_{padding_mode}_{train_prop:.2f}_{val_prop:.2f}.h5')
         
         if outpath.is_file():
             warnings.warn('Sampled data already exist, remove directory'
@@ -439,30 +445,35 @@ def split_random_sampling(inpath,
             patchgroup = out_file.create_group('patches')
             
             # sample patches
-            samplecount = _sample_patches([in_file['data'].value], [in_file['labels'].value], 
+            samplecount = _sample_patches([in_file['data'][:]], [in_file['labels'][:]], 
                         patch_size, 
                         patchgroup, 
                         padding_mode, 
                         padding_values, 
                         ignore_labels)        
 
-            # define test train split
-            split_idx = (int) (train_ratio * samplecount)
+            # define test, train and validation split
+            split_idx_train = int(train_prop * samplecount)
+            split_idx_val = int((train_prop + val_prop) * samplecount)
 
             samples = np.arange(samplecount)
             np.random.shuffle(samples)
-            train_samples = samples[:split_idx]
-            test_samples = samples[split_idx:]
+            train_samples = samples[:split_idx_train]
+            val_samples = samples[split_idx_train:split_idx_val]
+            test_samples = samples[split_idx_val:]
 
             out_file.create_dataset('trainsample_list', data=train_samples)
+            out_file.create_dataset('valsample_list', data=val_samples)
             out_file.create_dataset('testsample_list', data=test_samples)
-            out_file.attrs['train_ratio'] = train_ratio
+            out_file.attrs['train_prop'] = train_prop
+            out_file.attrs['val_prop'] = val_prop
             
         return outpath
 
-def split_secure_sampling(inpath,
+def split_valid_sampling(inpath,
         patch_size, 
-        train_ratio,
+        train_prop,
+        val_prop,
         outpath,
         padding_mode='constant', 
         padding_values=0, 
@@ -471,7 +482,7 @@ def split_secure_sampling(inpath,
         Samples data patch at each position without overlap between test and train data.
         
         The hyperspectral data cube is divided into non-overlapping subimages. These subimages
-        are divided into train and test data as specified by `train_ratio`. Each subimage is
+        are divided into train and test data as specified by `train_prop`. Each subimage is
         then padded and sampled at each position to yield a patch for each position. The assignment 
         of nonoverlapping subimages into train and test set before random sampling avoids data 
         leakage.
@@ -490,8 +501,10 @@ def split_secure_sampling(inpath,
             Path to hdf5-file containing the data set
         patch_size: int
             Size of sampled patches
-        train_ratio: float
+        train_prop: float
             Proportion of training data from all data.
+        val_prop: float
+            Proportion of validation data from all data
         outpath: PosixPath, str
             Path to hdf5-file where sampled data is exported to
         padding_mode: str or function
@@ -508,8 +521,8 @@ def split_secure_sampling(inpath,
         PosixPath : Path to hdf5-file with data samples.
 
         """
-        outdir = outpath.joinpath('secure_sampling')
-        outpath = outdir.joinpath(f'{patch_size}x{patch_size}_{padding_mode}_{train_ratio:.2f}.h5')
+        outdir = outpath.joinpath('valid_sampling')
+        outpath = outdir.joinpath(f'{patch_size}x{patch_size}_{padding_mode}_{train_prop:.2f}_{val_prop:.2f}.h5')
         
         if outpath.is_file():
             warnings.warn('Sampled data already exist, remove directory'
@@ -555,43 +568,65 @@ def split_secure_sampling(inpath,
             subimgs, subimg_labels = zip(*samples)
 
             # count how many pixels have non 'ignore_labels' and use result to assign approximately
-            # train_ratio share of non zero data to train set and (1-train_ratio) to test set
+            # train_prop share of non zero data to train set, val_prop of non zero data to validation set
+            # and (1-(train_prop+val_prop)) to test set.
             if ignore_labels:
                 cum_nonzero_labels = np.cumsum(
                         [np.invert(np.isin(lbls, ignore_labels)).sum() for lbls in subimg_labels])
-                split = 0
+                split_idx_train = 0
+                split_idx_val = 0
                 if cum_nonzero_labels[-1] == 0:
                     raise RuntimeError('Labelimage only contains ignored labels.')
-                while(cum_nonzero_labels[split]/cum_nonzero_labels[-1] < train_ratio):
-                    split += 1
-                #print(f'{cum_nonzero_labels[split]} / {cum_nonzero_labels[-1]}')
+                while(True):
+                    if (cum_nonzero_labels[split_idx_train]/cum_nonzero_labels[-1]) < train_prop:
+                        split_idx_train += 1
+                    if (cum_nonzero_labels[split_idx_val]/cum_nonzero_labels[-1]) < (train_prop + val_prop):
+                        split_idx_val += 1
+                    else:
+                        break
+                print(f'{cum_nonzero_labels[split_idx_train]} / {cum_nonzero_labels[-1]}')
+                print(f'{cum_nonzero_labels[split_idx_val]} / {cum_nonzero_labels[-1]}')
             else :
-                split = int((len(subimgs)*train_ratio))
+                split_idx_train = int(len(subimgs)*train_prop)
+                split_idx_val = int(len(subimgs)*(train_prop + val_prop))
 
             # sample test and training data patches
-            train_subimgs = subimgs[:split]
-            train_subimg_labels = subimg_labels[:split]
-            test_subimgs = subimgs[split:]
-            test_subimg_labels = subimg_labels[split:]
+            train_subimgs = subimgs[:split_idx_train]
+            train_subimg_labels = subimg_labels[:split_idx_train]
+            val_subimgs = subimgs[split_idx_train:split_idx_val]
+            val_subimg_labels = subimg_labels[split_idx_train:split_idx_val]
+            test_subimgs = subimgs[split_idx_val:]
+            test_subimg_labels = subimg_labels[split_idx_val:]
             train_samplecount = _sample_patches(train_subimgs, train_subimg_labels, 
                         patch_size, 
                         patchgroup, 
                         padding_mode, 
                         padding_values, 
                         ignore_labels)
+            val_samplecount = _sample_patches(val_subimgs, val_subimg_labels,
+                        patch_size,
+                        patchgroup,
+                        padding_mode,
+                        padding_values,
+                        ignore_labels,
+                        startidx=train_samplecount)
             test_samplecount = _sample_patches(test_subimgs, test_subimg_labels, 
                         patch_size, 
                         patchgroup, 
                         padding_mode, 
                         padding_values, 
                         ignore_labels,
-                        startidx=train_samplecount)
+                        startidx=(train_samplecount+val_samplecount))
 
             train_samples = np.arange(train_samplecount)
-            test_samples = np.arange(train_samplecount, train_samplecount+test_samplecount)
+            val_samples = np.arange(train_samplecount, train_samplecount+val_samplecount)
+            test_samples = np.arange((train_samplecount+val_samplecount), 
+                    (train_samplecount+val_samplecount+test_samplecount))
 
             out_file.create_dataset('trainsample_list', data=train_samples)
+            out_file.create_dataset('valsample_list', data=val_samples)
             out_file.create_dataset('testsample_list', data=test_samples)
-            out_file.attrs['train_ratio'] = train_ratio
+            out_file.attrs['train_prop'] = train_prop
+            out_file.attrs['val_prop'] = val_prop
 
         return outpath
