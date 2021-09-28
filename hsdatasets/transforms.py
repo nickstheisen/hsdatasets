@@ -26,6 +26,6 @@ class PermuteData(object):
 
     def __call__(self, sample):
         patch, label = sample
-        patch = patch.permute(0,3,1,2)
+        patch = patch.permute(self.new_order)
 
         return (patch, label)

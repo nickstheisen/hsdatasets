@@ -18,7 +18,7 @@ from .prep import download_dataset, split_random_sampling, split_valid_sampling
 from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData
 
 
-class RSDataset(pl.LightningDataModule):
+class HSDataModule(pl.LightningDataModule):
 
     def __init__(
             self,
