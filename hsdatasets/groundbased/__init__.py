@@ -1,1 +1,1 @@
-from .groundbased import GroundBasedHSDataset, HSDataModule
+from .groundbased import GroundBasedHSDataset, HSDataModule, HyperspectralCity2

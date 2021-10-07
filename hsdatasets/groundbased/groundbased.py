@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 from torchvision import transforms
 import numpy as np
 
-from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData
+from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel
 
 class HSDataModule(pl.LightningDataModule):
 
@@ -21,7 +21,6 @@ class HSDataModule(pl.LightningDataModule):
             batch_size: int = 8,
             train_prop: float = 0.7, # train proportion (of all data)
             val_prop: float = 0.1, # validation proportion (of all data)
-            pca_dim: int = 75,
     ):
         super().__init__()
         self.filepath = filepath
@@ -29,13 +28,8 @@ class HSDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.train_prop = train_prop
         self.val_prop = val_prop
-        self.pca_dim = pca_dim
 
     def prepare_data(self):
-        self.transform = transforms.Compose([
-            ToTensor(),
-            PermuteData(new_order=[2,0,1])])
-
         dataset = GroundBasedHSDataset(self.filepath, transform=self.transform)
         train_size = round(self.train_prop * len(dataset))
         val_size = round(self.val_prop * len(dataset))
@@ -60,21 +54,50 @@ class HSDataModule(pl.LightningDataModule):
                 shuffle=False,
                 num_workers=self.num_workers)
 
+class HyperspectralCity2(HSDataModule):
+
+    def __init__(
+            self,
+            filepath: str,
+            num_workers: int = 8,
+            batch_size: int = 8,
+            train_prop: float = 0.7, # train proportion (of all data)
+            val_prop: float = 0.1, # validation proportion (of all data)
+    ):
+        super().__init__(
+                filepath=filepath,
+                num_workers=num_workers,
+                batch_size=batch_size,
+                train_prop=train_prop,
+                val_prop=val_prop)
+
+        self.transform = transforms.Compose([
+            ToTensor(),
+            PermuteData(new_order=[2,0,1]),
+            ReplaceLabel(255,19)
+        ])
 
 class GroundBasedHSDataset(Dataset):
 
     def __init__(self, filepath, transform):
-        self._file = h5py.File(filepath, 'r')
-        self._samplelist = list(self._file.keys())
+        self._filepath = filepath
+        
+        # if h5file is kept open, the object cannot be pickled and in turn 
+        # multi-gpu cannot be used
+        h5file = h5py.File(self._filepath, 'r')
+        self._samplelist = list(h5file.keys())
         self._transform = transform
+        h5file.close()
 
     def __len__(self):
         return len(self._samplelist)
 
     def __getitem__(self, idx):
-        sample = (np.array(self._file[self._samplelist[idx]]['data']),
-                np.array(self._file[self._samplelist[idx]]['labels']))
+        h5file = h5py.File(self._filepath)
+        sample = (np.array(h5file[self._samplelist[idx]]['data']),
+                np.array(h5file[self._samplelist[idx]]['labels']))
 
         if self._transform:
             sample = self._transform(sample)
+        h5file.close()
         return sample
