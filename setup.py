@@ -1,11 +1,11 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='HyperspectralDatasets',
     version='0.1.0',
     author='Nick Theisen',
     author_email='nicktheisen@uni-koblenz.de',
-    packages=['hsdatasets'],
+    packages=find_packages(),
     scripts=[],
     url='',
     license='LICENSE.txt',
