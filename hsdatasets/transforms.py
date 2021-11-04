@@ -26,6 +26,18 @@ class PermuteData(object):
 
     def __call__(self, sample):
         patch, label = sample
-        patch = patch.permute(0,3,1,2)
+        patch = patch.permute(self.new_order)
+
+        return (patch, label)
+
+class ReplaceLabel(object):
+    """ Replace label `orig_lbl` with `new_lbl`."""
+    def __init__(self, orig_lbl, new_lbl):
+        self.orig_lbl = orig_lbl
+        self.new_lbl = new_lbl
+
+    def __call__(self, sample):
+        patch, label = sample
+        label[label == self.orig_lbl] = self.new_lbl
 
         return (patch, label)
