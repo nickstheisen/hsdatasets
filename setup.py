@@ -19,6 +19,7 @@ setup(
         "tqdm",
         "scikit-learn",
         "scikit-image",
-        "gdown"
+        "gdown",
+        "pytorch_lightning"
         ],
 )
