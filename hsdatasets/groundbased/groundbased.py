@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 from torchvision import transforms
 import numpy as np
 
-from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel
+from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel, ReplaceLabels
 
 class HSDataModule(pl.LightningDataModule):
 
@@ -53,6 +53,29 @@ class HSDataModule(pl.LightningDataModule):
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers)
+
+class HyKo2(HSDataModule):
+    def __init__(
+            self,
+            filepath: str,
+            num_workers: int = 8,
+            batch_size: int = 8,
+            train_prop: float = 0.7, # train proportion (of all data)
+            val_prop: float = 0.1, # validation proportion (of all data)
+    ):
+        super().__init__(
+                filepath=filepath,
+                num_workers=num_workers,
+                batch_size=batch_size,
+                train_prop=train_prop,
+                val_prop=val_prop)
+
+        self.transform = transforms.Compose([
+            ToTensor(),
+            PermuteData(new_order=[2,0,1]),
+            ReplaceLabels({0:10, 1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:7, 9:8, 10:9}) # replace undefined label 0 with 10 and then shift labels by one
+        ])
+
 
 class HyperspectralCity2(HSDataModule):
 

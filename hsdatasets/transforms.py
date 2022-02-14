@@ -41,3 +41,15 @@ class ReplaceLabel(object):
         label[label == self.orig_lbl] = self.new_lbl
 
         return (patch, label)
+
+class ReplaceLabels(object):
+    """ Replace labels based on mapping given as dictionary `label_mapping`"""
+    def __init__(self, label_mapping):
+        self.label_mapping = label_mapping
+
+    def __call__(self, sample):
+        patch, label = sample
+        res_label = torch.clone(label)
+        for k, v in self.label_mapping.items() : res_label[label == k] = v
+
+        return (patch, res_label)
