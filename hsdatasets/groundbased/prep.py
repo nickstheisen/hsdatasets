@@ -17,10 +17,23 @@ DATASETS_CONFIG = {
                 'data_key' : 'data',
                 'label_key' : 'label_Semantic Classes for Urban Scenes',
             },
+            'Material': {
+                'data_key' : 'data',
+                'label_key': 'label_spectral_reflectances'
+            }
         },
         'HyKo2-NIR': {
-            'name': '',
-            'url':'',
+            'name': 'nir_annotated.zip',
+            'url':'https://hyko-proxy.uni-koblenz.de/hyko-dataset/HyKo2/nir/nir_annotated.zip',
+            'Semantic': {
+                'data_key' : 'data',
+                'label_key': 'label_Semantic Classes for Urban Scenes',
+            },
+            'Material': {
+                'data_key' : 'data',
+                'label_key': 'label_spectral_reflectances'
+            }
+
         },
 }
 

@@ -20,6 +20,7 @@ setup(
         "scikit-learn",
         "scikit-image",
         "gdown==4.3.1",
-        "pytorch_lightning"
+        "pytorch_lightning",
+        "h5py"
         ],
 )
