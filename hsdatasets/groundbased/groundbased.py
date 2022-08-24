@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 from torchvision import transforms
 import numpy as np
 
-from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel, ReplaceLabels
+from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel, ReplaceLabels, PCADR
 
 def label_histogram(dataset, n_classes):
     label_hist = torch.zeros(n_classes) # do not count 'unefined'(highest class_id)
@@ -123,14 +123,16 @@ class HyKo2(HSDataModule):
             sys.exit()
 
 class HyperspectralCityV2(HSDataModule):
-    def __init__(self, **kwargs):
+    def __init__(self, half_precision=False, **kwargs):
         super().__init__(**kwargs)
+        self.half_precision = half_precision
 
         self.transform = transforms.Compose([
-            ToTensor(),
+            ToTensor(half_precision=self.half_precision),
             PermuteData(new_order=[2,0,1]),
             ReplaceLabels({255:19})
         ])
+
 class GroundBasedHSDataset(Dataset):
 
     def __init__(self, filepath, transform):

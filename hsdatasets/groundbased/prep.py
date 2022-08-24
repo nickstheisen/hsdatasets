@@ -6,6 +6,8 @@ from pathlib import Path
 from urllib.request import urlretrieve
 from zipfile import ZipFile
 from scipy.io import loadmat
+import sys
+from sklearn.decomposition import PCA
 
 from hsdatasets.utils import TqdmUpTo
 
@@ -81,3 +83,37 @@ def download_dataset(base_dir, name):
                         # print name of file and keys to find broken or incomplete files
                         print(f'File {filename} is incomplete. Keys are {mat.keys()}.')
     return filepath_hdf 
+
+def apply_pca(n_components, origin_path, target_path):
+    origin_path = Path(origin_path)
+    target_path = Path(target_path)
+    if target_path.exists():
+        print(f"Target data set `{target_path}` already exists. Skipping PCA ...")
+        return
+    if not origin_path.exists():
+        print(f"Origin data set `{origin_path}` does not exist. Exiting ...")
+        sys.exit()
+
+    pca = PCA(n_components)
+    with h5py.File(target_path, "w") as target_file, h5py.File(origin_path, "r") as origin_file:
+        num_data = len(origin_file.keys())
+        with tqdm(total=num_data) as pbar:
+            for key in origin_file.keys():
+                group = target_file.create_group(key)
+
+                # dim red. with pca
+                data = np.array(origin_file[key]['data'])
+                in_shape = data.shape
+                out_shape = list(in_shape)
+                out_shape[-1] = n_components
+                X = data.reshape((-1, in_shape[-1]))
+                Xt = pca.fit_transform(X)
+                transformed = Xt.reshape(out_shape)
+                
+                # write to file
+                group.create_dataset("labels",  data=origin_file[key]['labels'])
+                group.create_dataset("data", data=np.float16(transformed))
+                
+                # update progress bar
+                pbar.update(1)
+

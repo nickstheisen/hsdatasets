@@ -1,14 +1,22 @@
 import torch
+from sklearn.decomposition import PCA
+import numpy as np
 
 class ToTensor(object):
     """ Convert tuples of hyperspectral data and labels to tensors."""
+    def __init__(self, half_precision=False):
+        self.half_precision=half_precision
 
     def __call__(self, sample):
         patch, label = sample
-        patch = torch.from_numpy(patch.astype(float))
-        label = torch.from_numpy(label)
+        patch = torch.from_numpy(patch)
+        label = torch.from_numpy(label).type(torch.long)
 
-        return (patch.type(torch.float32), label.type(torch.long))
+        if self.half_precision:
+            patch = patch.type(torch.float16)
+        else:
+            patch = patch.type(torch.float32)
+        return (patch, label)
 
 class InsertEmptyChannelDim(object):
     """ Insert Empty Channel dimension to apply 3D-Convolutions to hyperspectral images tensors."""
@@ -53,3 +61,23 @@ class ReplaceLabels(object):
         for k, v in self.label_mapping.items() : res_label[label == k] = v
 
         return (patch, res_label)
+
+class PCADR(object):
+    """ Reduce dimensionality using PCA to `target_dims`. Parameters are fitted for each batch."""
+    def __init__(self, target_dim):
+        self.target_dim = target_dim
+
+    def __call__(self, sample):
+        in_patch, label = sample
+        pca = PCA(n_components=self.target_dim)
+
+        in_shape = in_patch.shape
+        out_shape = list(in_shape)
+        out_shape[-1] = self.target_dim
+
+        X = np.reshape(in_patch, (-1, in_shape[-1]))
+        X = pca.fit_transform(X)
+        out_patch = np.reshape(X, out_shape)
+
+        return (out_patch, label)
+        
