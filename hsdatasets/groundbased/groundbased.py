@@ -36,6 +36,9 @@ class HSDataModule(pl.LightningDataModule):
             precalc_histograms: bool=False
     ):
         super().__init__()
+        
+        self.save_hyperparameters()
+
         self.filepath = filepath
         self.num_workers = num_workers
         self.batch_size = batch_size
