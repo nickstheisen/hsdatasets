@@ -151,6 +151,9 @@ class GroundBasedHSDataset(Dataset):
     def __len__(self):
         return len(self._samplelist)
 
+    def samplelist(self):
+        return self._samplelist
+
     def __getitem__(self, idx):
         h5file = h5py.File(self._filepath)
         sample = (np.array(h5file[self._samplelist[idx]]['data']),
