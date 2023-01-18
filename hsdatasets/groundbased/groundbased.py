@@ -3,6 +3,7 @@
 import h5py
 
 from typing import List, Any, Optional
+from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -11,6 +12,7 @@ from torchvision import transforms
 import numpy as np
 
 from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel, ReplaceLabels, PCADR
+from .hsiroad import get_dataset
 
 def label_histogram(dataset, n_classes):
     label_hist = torch.zeros(n_classes) # do not count 'unefined'(highest class_id)
@@ -135,6 +137,64 @@ class HyperspectralCityV2(HSDataModule):
             PermuteData(new_order=[2,0,1]),
             ReplaceLabels({255:19})
         ])
+
+class HSIRoad(pl.LightningDataModule):
+    def __init__( 
+            self,
+            basepath: str,
+            sensortype: str, # vis, nir, rgb
+            batch_size: int,
+            num_workers: int,
+            ):
+        super().__init__()
+        
+        self.save_hyperparameters()
+
+        self.basepath = Path(basepath)
+        self.sensortype = sensortype
+        
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.transform = transforms.Compose([
+                            ToTensor()
+                        ])
+
+    def setup(self, stage: Optional[str] = None):
+        self.dataset_train = get_dataset(
+                                data_dir=self.basepath,
+                                sensortype=self.sensortype,
+                                transform=self.transform,
+                                mode='train')
+
+        # TODO (RB) probably want to set mode to "val" below?
+        self.dataset_val = get_dataset(                                
+                                data_dir=self.basepath, 
+                                sensortype=self.sensortype, 
+                                transform=self.transform,
+                                mode='train')
+
+    def train_dataloader(self):
+        return DataLoader(
+                self.dataset_train,
+                batch_size=self.batch_size,
+                shuffle=True,
+                num_workers=self.num_workers)
+    def val_dataloader(self):
+        return DataLoader(
+                self.dataset_val,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers)
+
+    def test_dataloader(self):
+        # using val-set is not a typo, unfortunately the dataset authors provide only train and valid
+        # ation sets. They use the validation set also as test set. We do the same to keep experiments
+        # comparable
+        return DataLoader(
+                self.dataset_val, 
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers)
 
 class GroundBasedHSDataset(Dataset):
 
