@@ -166,12 +166,11 @@ class HSIRoad(pl.LightningDataModule):
                                 transform=self.transform,
                                 mode='train')
 
-        # TODO (RB) probably want to set mode to "val" below?
         self.dataset_val = get_dataset(                                
                                 data_dir=self.basepath, 
                                 sensortype=self.sensortype, 
                                 transform=self.transform,
-                                mode='train')
+                                mode='val')
 
     def train_dataloader(self):
         return DataLoader(
