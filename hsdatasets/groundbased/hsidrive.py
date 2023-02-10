@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import pytorch_lightning as pl
 from torchvision import transforms
-from hsdatasets.transforms import ToTensor
+from hsdatasets.transforms import ToTensor, ReplaceLabels
 
 from typing import List, Any, Optional
 from pathlib import Path
@@ -64,7 +64,8 @@ class HSIDrive(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.transform = transforms.Compose([
-                            ToTensor()
+                            ToTensor(),
+                            ReplaceLabels({0:10, 1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:7, 9:8, 10:9}) # replace undefined label 0 with 10 and then shift labels by one
                         ])
         self.manual_seed = manual_seed
         self.precalc_histograms=precalc_histograms
