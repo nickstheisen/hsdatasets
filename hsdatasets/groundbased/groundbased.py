@@ -94,7 +94,8 @@ class HSDataModule(pl.LightningDataModule):
         return DataLoader(self.dataset_train,
                 batch_size=self.batch_size,
                 shuffle=True,
-                num_workers=self.num_workers)
+                num_workers=self.num_workers,
+                persistent_workers=True)
 
     def val_dataloader(self):
         return DataLoader(self.dataset_val,
@@ -145,6 +146,7 @@ class HSIRoad(pl.LightningDataModule):
             sensortype: str, # vis, nir, rgb
             batch_size: int,
             num_workers: int,
+            precalc_histograms: bool=False,
             ):
         super().__init__()
         
@@ -158,6 +160,18 @@ class HSIRoad(pl.LightningDataModule):
         self.transform = transforms.Compose([
                             ToTensor()
                         ])
+        self.precalc_histograms=precalc_histograms
+        self.c_hist_train = None
+        self.c_hist_val = None
+        self.c_hist_test = None
+
+        self.n_classes = 2
+
+    def class_histograms(self):
+        if self.c_hist_train is not None :
+            return (self.c_hist_train, self.c_hist_val, self.c_hist_test)
+        else :
+            return None
 
     def setup(self, stage: Optional[str] = None):
         self.dataset_train = get_dataset(
@@ -171,6 +185,11 @@ class HSIRoad(pl.LightningDataModule):
                                 sensortype=self.sensortype, 
                                 transform=self.transform,
                                 mode='val')
+        if self.precalc_histograms:
+            self.c_hist_train = label_histogram(
+                    self.dataset_train, self.n_classes)
+            self.c_hist_val = label_histogram(
+                    self.dataset_val, self.n_classes)
 
     def train_dataloader(self):
         return DataLoader(
