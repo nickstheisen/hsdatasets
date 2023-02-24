@@ -108,7 +108,7 @@ def apply_pca(n_components, origin_path, target_path):
                 out_shape[-1] = n_components
                 X = data.reshape((-1, in_shape[-1]))
                 Xt = pca.fit_transform(X)
-                print(f"pca variance ratio:{pca.explained_variance_ratio_}")
+                #print(f"pca variance ratio:{pca.explained_variance_ratio_}")
                 transformed = Xt.reshape(out_shape)
                 
                 # write to file
