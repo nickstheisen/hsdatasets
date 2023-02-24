@@ -13,6 +13,16 @@ import numpy as np
 from scipy.io import loadmat
 from imageio import imread
 
+def label_histogram(dataset, n_classes):
+    label_hist = torch.zeros(n_classes) # do not count 'unefined'(highest class_id)
+    for i, (_, labels) in enumerate(DataLoader(dataset)):
+        label_ids, counts = labels.unique(return_counts=True)
+        for i in range(len(label_ids)):
+            label_id = label_ids[i]
+            if not (label_id == n_classes):
+                label_hist[label_id] += counts[i]
+    return label_hist
+
 class HSIDriveDataset(Dataset):
 
     def __init__(self, basepath, transform):
