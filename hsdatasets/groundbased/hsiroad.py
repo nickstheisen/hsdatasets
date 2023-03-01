@@ -1,3 +1,94 @@
+#!/usr/bin/env/python
+import os
+import numpy as np
+import tifffile
+
+from typing import List, Any, Optional
+
+import torch
+import pytorch_lightning as pl
+from torch.utils.data import Dataset, DataLoader
+
+from torchvision import transforms
+from hsdatasets.transforms import ToTensor
+
+class HSIRoad(pl.LightningDataModule):
+    def __init__( 
+            self,
+            basepath: str,
+            sensortype: str, # vis, nir, rgb
+            batch_size: int,
+            num_workers: int,
+            precalc_histograms: bool=False,
+            ):
+        super().__init__()
+        
+        self.save_hyperparameters()
+
+        self.basepath = Path(basepath)
+        self.sensortype = sensortype
+        
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.transform = transforms.Compose([
+                            ToTensor()
+                        ])
+        self.precalc_histograms=precalc_histograms
+        self.c_hist_train = None
+        self.c_hist_val = None
+        self.c_hist_test = None
+
+        self.n_classes = 2
+
+    def class_histograms(self):
+        if self.c_hist_train is not None :
+            return (self.c_hist_train, self.c_hist_val, self.c_hist_test)
+        else :
+            return None
+
+    def setup(self, stage: Optional[str] = None):
+        self.dataset_train = get_dataset(
+                                data_dir=self.basepath,
+                                sensortype=self.sensortype,
+                                transform=self.transform,
+                                mode='train')
+
+        self.dataset_val = get_dataset(                                
+                                data_dir=self.basepath, 
+                                sensortype=self.sensortype, 
+                                transform=self.transform,
+                                mode='val')
+        if self.precalc_histograms:
+            self.c_hist_train = label_histogram(
+                    self.dataset_train, self.n_classes)
+            self.c_hist_val = label_histogram(
+                    self.dataset_val, self.n_classes)
+
+    def train_dataloader(self):
+        return DataLoader(
+                self.dataset_train,
+                batch_size=self.batch_size,
+                shuffle=True,
+                num_workers=self.num_workers)
+    def val_dataloader(self):
+        return DataLoader(
+                self.dataset_val,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers)
+
+    def test_dataloader(self):
+        # using val-set is not a typo, unfortunately the dataset authors provide only train and valid
+        # ation sets. They use the validation set also as test set. We do the same to keep experiments
+        # comparable
+        return DataLoader(
+                self.dataset_val, 
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers)
+
+
+
 """
 layout 2.0 (33G raw data, 24G images, 4G masks)
     -hsi_road
@@ -11,13 +102,6 @@ layout 2.0 (33G raw data, 24G images, 4G masks)
 
 Based on: https://github.com/NUST-Machine-Intelligence-Laboratory/hsi_road/blob/master/datasets.py
 """
-import os
-import numpy as np
-import tifffile
-
-import torch
-from torch.utils.data import Dataset
-
 
 class HsiRoadDataset(Dataset):
     CLASSES = ('background', 'road')

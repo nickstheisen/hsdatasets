@@ -11,9 +11,6 @@ import pytorch_lightning as pl
 from torchvision import transforms
 import numpy as np
 
-from hsdatasets.transforms import ToTensor, InsertEmptyChannelDim, PermuteData, ReplaceLabel, ReplaceLabels, PCADR
-from .hsiroad import get_dataset
-
 def label_histogram(dataset, n_classes):
     label_hist = torch.zeros(n_classes) # do not count 'unefined'(highest class_id)
     for i, (_, labels) in enumerate(DataLoader(dataset)):
@@ -105,111 +102,6 @@ class HSDataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         return DataLoader(self.dataset_test,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers)
-
-class HyKo2(HSDataModule):
-    def __init__(self, label_set, **kwargs):
-        super().__init__(**kwargs)
-        if label_set == 'semantic':
-            self.transform = transforms.Compose([
-                ToTensor(),
-                PermuteData(new_order=[2,0,1]),
-                ReplaceLabels({0:10, 1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:7, 9:8, 10:9}) # replace undefined label 0 with 10 and then shift labels by one
-            ])
-        elif label_set == 'material':
-            self.transform = transforms.Compose([
-                ToTensor(),
-                PermuteData(new_order=[2,0,1]),
-                ReplaceLabels({0:8, 1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:7}) # replace undefined label 0 with 8 and then shift labels by one
-            ])
-        else: 
-            print('define labelset parameter as eiterh `semantic` or `material`')
-            sys.exit()
-
-class HyperspectralCityV2(HSDataModule):
-    def __init__(self, half_precision=False, **kwargs):
-        super().__init__(**kwargs)
-        self.half_precision = half_precision
-
-        self.transform = transforms.Compose([
-            ToTensor(half_precision=self.half_precision),
-            PermuteData(new_order=[2,0,1]),
-            ReplaceLabels({255:19})
-        ])
-
-class HSIRoad(pl.LightningDataModule):
-    def __init__( 
-            self,
-            basepath: str,
-            sensortype: str, # vis, nir, rgb
-            batch_size: int,
-            num_workers: int,
-            precalc_histograms: bool=False,
-            ):
-        super().__init__()
-        
-        self.save_hyperparameters()
-
-        self.basepath = Path(basepath)
-        self.sensortype = sensortype
-        
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.transform = transforms.Compose([
-                            ToTensor()
-                        ])
-        self.precalc_histograms=precalc_histograms
-        self.c_hist_train = None
-        self.c_hist_val = None
-        self.c_hist_test = None
-
-        self.n_classes = 2
-
-    def class_histograms(self):
-        if self.c_hist_train is not None :
-            return (self.c_hist_train, self.c_hist_val, self.c_hist_test)
-        else :
-            return None
-
-    def setup(self, stage: Optional[str] = None):
-        self.dataset_train = get_dataset(
-                                data_dir=self.basepath,
-                                sensortype=self.sensortype,
-                                transform=self.transform,
-                                mode='train')
-
-        self.dataset_val = get_dataset(                                
-                                data_dir=self.basepath, 
-                                sensortype=self.sensortype, 
-                                transform=self.transform,
-                                mode='val')
-        if self.precalc_histograms:
-            self.c_hist_train = label_histogram(
-                    self.dataset_train, self.n_classes)
-            self.c_hist_val = label_histogram(
-                    self.dataset_val, self.n_classes)
-
-    def train_dataloader(self):
-        return DataLoader(
-                self.dataset_train,
-                batch_size=self.batch_size,
-                shuffle=True,
-                num_workers=self.num_workers)
-    def val_dataloader(self):
-        return DataLoader(
-                self.dataset_val,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers)
-
-    def test_dataloader(self):
-        # using val-set is not a typo, unfortunately the dataset authors provide only train and valid
-        # ation sets. They use the validation set also as test set. We do the same to keep experiments
-        # comparable
-        return DataLoader(
-                self.dataset_val, 
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers)

@@ -1,2 +1,4 @@
-from .groundbased import GroundBasedHSDataset, HSDataModule, HyperspectralCityV2, HSIRoad
+from .groundbased import GroundBasedHSDataset, HSDataModule
 from .hsidrive import HSIDrive
+from .hsiroad import HSIRoad
+from .hyko2 import HyKo2
