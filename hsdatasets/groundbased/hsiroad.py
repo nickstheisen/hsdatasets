@@ -103,7 +103,7 @@ layout 2.0 (33G raw data, 24G images, 4G masks)
 Based on: https://github.com/NUST-Machine-Intelligence-Laboratory/hsi_road/blob/master/datasets.py
 """
 
-class HsiRoadDataset(Dataset):
+class HSIRoadDataset(Dataset):
     CLASSES = ('background', 'road')
     COLLECTION = ('rgb', 'vis', 'nir')
 
@@ -111,7 +111,13 @@ class HsiRoadDataset(Dataset):
         # 0 is background and 1 is road
         self.data_dir = data_dir
         self.collection = collection.lower()
+        
+        # mode == 'train' || mode == 'validation''
         path = os.path.join(data_dir, 'train.txt' if mode == 'train' else 'valid.txt')
+        
+        if mode == 'full':
+            path = os.path.join(data_dir, 'all.txt')
+
         self.name_list = np.genfromtxt(path, dtype='str')
         self.classes = [self.CLASSES.index(cls.lower()) for cls in classes]
         self._transform = transform
@@ -137,7 +143,7 @@ class HsiRoadDataset(Dataset):
 
 def get_dataset(data_dir, sensortype, transform, mode):
     ds = None
-    ds = HsiRoadDataset(data_dir=data_dir, collection=sensortype, transform=transform, mode=mode)
+    ds = HSIRoadDataset(data_dir=data_dir, collection=sensortype, transform=transform, mode=mode)
     return ds
 
 
