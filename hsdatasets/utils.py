@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from tqdm import tqdm
+import numpy as np
 
 class TqdmUpTo(tqdm):
     """Provides `update_to(n)` which uses `tqdm.update(delta_n)`."""
@@ -16,3 +17,9 @@ class TqdmUpTo(tqdm):
         if tsize is not None:
             self.total = tsize
         self.update(b * bsize - self.n)
+
+def load_label_def(label_def):
+    label_defs = np.loadtxt(label_def, delimiter=',', dtype=str)
+    label_names = np.array(label_defs[:,1])
+    label_colors = np.array(label_defs[:, 2:], dtype='int')
+    return label_names, label_colors
