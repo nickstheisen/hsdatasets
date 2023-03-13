@@ -1,10 +1,10 @@
 #!/usr/bin/bash
 
 echo "===== Plot HSIDrive ====="
-python heatmap_plots_hsidrive.py
+#python heatmap_plots_hsidrive.py
 echo "\n===== Plot HyKo2 ========"
-python heatmap_plots_hyko2vissem.py
+#python heatmap_plots_hyko2vissem.py
 echo "\n===== Plot HSIRoad ======"
-python heatmap_plot_hsiroad.py
+python heatmap_plots_hsiroad.py
 echo "\n===== Plot HCV2 ========="
-python heatmap_hcv2.py
+python heatmap_plots_hcv2.py

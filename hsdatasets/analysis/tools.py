@@ -11,8 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import datashader as ds
 import datashader.transfer_functions as tr
-
-
+import colorcet
 
 class SpectrumPlotter():
     def __init__(
@@ -31,6 +30,7 @@ class SpectrumPlotter():
         self.label_names, self.label_colors = load_label_def(class_def)
         self.label_colors = self.label_colors / 255.
         self.class_spectra = None
+        self.class_spectra_np = None
         self.y_max = None
         self.y_min = None
 
@@ -68,13 +68,19 @@ class SpectrumPlotter():
         
         # temporary dictionary to store class samples of each image in
         spectra_dict = dict()
+        spectra_dict_np = dict()
         for c in range(self.num_classes):
             spectra_dict[c] = []
-        print(spectra_dict)
+            spectra_dict_np[c] = []
         
         # iterate over dataset and extract class spectra
         print("#### Start Extraction ####")
+        print(f"Nr. of classes: {self.num_classes}")
         for data, labels in tqdm(self.dataloader):
+        
+        # Below code kept for debugging
+        #data, labels = next(iter(self.dataloader))
+        #if True:
 
             # calculate y-limits
             if self.y_max is None or data.max() > self.y_max:
@@ -83,16 +89,17 @@ class SpectrumPlotter():
                 self.y_min = data.min()
             
             # convert to correct shape
-            n_channels = data.shape[1]
-            data = np.squeeze(data).reshape(n_channels, -1).swapaxes(0,1)
+            self.n_channels = data.shape[1]
+            data = np.squeeze(data).reshape(self.n_channels, -1).swapaxes(0,1)
             labels = np.squeeze(labels).reshape(-1)
             
             for c in range(self.num_classes):
-                class_spectra = data[labels == c].numpy()
+                class_spectra = data[labels == c]#.numpy()
 
                 # prepare data for efficient plotting
                 dataframe = self._prepare_for_plotting(class_spectra)
                 spectra_dict[c].append(dataframe)
+                spectra_dict_np[c].append(class_spectra)
         
         print("#### Extraction finished ####")
         self.y_min = float(self.y_min)
@@ -100,12 +107,15 @@ class SpectrumPlotter():
         print("#### Aggregating Data ####")
         # store class spectra for further processing and analysis
         self.class_spectra = dict()
+        self.class_spectra_np = dict()
+        
         for c in range(self.num_classes):
             if len(spectra_dict[c]) == 0:
                 self.class_spectra[c] = None
                 print(f"Warning: No samples of class '{self.label_names[c]}' with ID '{c}' found.")
                 continue
             self.class_spectra[c] = pd.concat(spectra_dict[c])
+            self.class_spectra_np[c] = np.concatenate(spectra_dict_np[c])
         print("#### Aggregation Finished ####")
             
     def plot_color(self, out_dir, filetype='jpg',ylim=[0.0,2.0]):
@@ -113,8 +123,8 @@ class SpectrumPlotter():
         
         # iterate over dataset
         for data, labels in tqdm(self.dataloader):
-            n_channels = data.shape[1]
-            data = np.squeeze(data).reshape(n_channels, -1).swapaxes(0,1)
+            self.n_channels = data.shape[1]
+            data = np.squeeze(data).reshape(self.n_channels, -1).swapaxes(0,1)
             labels = np.squeeze(labels).reshape(-1)
             
             # plot spectra
@@ -141,8 +151,11 @@ class SpectrumPlotter():
             print("Error: Spectra must be extracted before plotting. Please call "
                    " function `extract_class_samples()`.")
 
-        data, labels = next(iter(self.dataloader))
+        print(f"Nr. of channels: {self.n_channels}")
+        print(f"#### Start Plotting ####")
         for c in range(self.num_classes):
+            print(f"Class-ID: {c}")
+            print(f"\tNr. Samples: {self.class_spectra_np[c].shape}\n")
             filename = out_path.joinpath(f"{self.dataset_name}_class{c:02d}.{filetype}")
             df = self.class_spectra[c]
             if df is None:
@@ -163,12 +176,32 @@ class SpectrumPlotter():
             aggs = cvs.line(df, 'x', 'y', ds.count())
 
             ## plot data with one color
-            stacked_img = tr.Image(tr.shade(aggs, cmap=plt.cm.Spectral_r))
+            heatmap = tr.Image(tr.shade(aggs, cmap=colorcet.fire, how='linear'))
 
             # export data
             fig = plt.figure(c)
             ax = fig.add_subplot(111)
-            ax.imshow(stacked_img.to_pil())
+            ax.imshow(heatmap.to_pil())
             plt.title(self.label_names[c])
+
+            # configure plot
+            xstep = w/(self.n_channels-1)
+            xticks = np.arange(0, w+xstep, xstep)
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(np.arange(0,self.n_channels))
+            plt.xticks(rotation = 45)
+            # split y-axis into 5 sections
+            ystep = h/4
+            yticks = np.arange(0, h+ystep, ystep)
+            ax.set_yticks(yticks)
+            ax.set_yticklabels(
+                np.round(np.arange(self.y_max, self.y_min, -(self.y_max-self.y_min)/5), 
+                decimals=2)
+            )
+
+            # add marginal distribution to plot
+            #ax = fig.add_subplot(224)
+            #ax.plot(aggs.sum(axis=0)) # distribution along x-axis
+
             plt.savefig(filename, bbox_inches='tight', dpi=dpi)
             plt.clf()
